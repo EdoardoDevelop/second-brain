@@ -147,6 +147,24 @@ export async function similarItems(text: string, limit = 12, exclude?: string): 
   return found.filter((id) => id !== exclude).slice(0, limit);
 }
 
+/** Coppie di elementi molto simili per significato (candidati doppioni o collegamenti), dalla più simile. */
+export async function similarPairs(min = 0.75, limit = 60): Promise<{ a: string; b: string; score: number }[]> {
+  const store = await vectors();
+  const n = Math.min(store.ids.length, 3000);
+  const out: { a: string; b: string; score: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const u = store.vecs[i];
+    for (let j = i + 1; j < n; j++) {
+      const v = store.vecs[j];
+      if (v.length !== u.length) continue;
+      let dot = 0;
+      for (let k = 0; k < v.length; k++) dot += u[k] * v[k];
+      if (dot >= min) out.push({ a: store.ids[i], b: store.ids[j], score: dot });
+    }
+  }
+  return out.sort((x, y) => y.score - x.score).slice(0, limit);
+}
+
 export async function embeddingCount() {
   const rows = await db.select({ id: embeddings.itemId }).from(embeddings);
   return rows.length;

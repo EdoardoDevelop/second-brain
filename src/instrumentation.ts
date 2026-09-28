@@ -5,12 +5,15 @@ export async function register() {
   if (g.__sbTimer) return;
   const { dailyDigestTick, remindersTick } = await import("./lib/push");
   const { syncEmbeddings } = await import("./lib/semantic");
+  const { gardenTick } = await import("./lib/garden");
   const { ready } = await import("./lib/db");
   let n = 0;
   // Prima si aspetta il database (al primo avvio crea tabelle e colonne), poi i controlli.
   const tick = () => ready().then(() => {
     remindersTick().catch((e) => console.error("[promemoria]", e));
     dailyDigestTick().catch((e) => console.error("[notifiche]", e));
+    // Di notte: cura della memoria (collegamenti, tag, doppioni da proporre).
+    gardenTick().catch((e) => console.error("[cura]", e));
     // Ogni 10 minuti: impronte di significato mancanti (elementi nuovi o modificati).
     if (n++ % 10 === 0) syncEmbeddings().catch((e) => console.error("[indice]", e));
   }).catch((e) => console.error("[pianificatore]", e));

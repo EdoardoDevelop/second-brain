@@ -30,6 +30,7 @@ export const KIND: Record<CommandKind, [string, IconName]> = {
   archive_item: ["Archivia elemento", "archive"],
   favorite_item: ["Preferiti", "star"],
   link_items: ["Collega elementi", "link"],
+  merge_items: ["Unisci doppioni", "archive"],
 };
 
 const PRIO = ["", "Alta", "Media", "Bassa"];
@@ -184,7 +185,7 @@ export function ActionCard({ a, names, onChange }: { a: CommandAction & { on: bo
   if (a.taskId) facts.push(names[a.taskId] ?? a.taskId);
   if (a.goalId) facts.push(names[a.goalId] ?? a.goalId);
   if (a.itemId) facts.push(names[a.itemId] ?? a.itemId);
-  if (a.targetId) facts.push("↔ " + (names[a.targetId] ?? a.targetId));
+  if (a.targetId) facts.push((a.kind === "merge_items" ? "← unisce e archivia " : "↔ ") + (names[a.targetId] ?? a.targetId));
   if (a.reason) facts.push((a.conflict ? "In conflitto: " : "Motivo: ") + a.reason);
   if (a.kind === "favorite_item") facts.push(a.conflict === false ? "Togli dai preferiti" : "Aggiungi ai preferiti");
   if (a.kind === "update_task" && a.title) facts.push("Nuovo titolo: " + a.title);

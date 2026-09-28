@@ -1,12 +1,13 @@
 import { inArray } from "drizzle-orm";
 import { isAuthenticated } from "@/lib/auth";
-import { aiEnabled, type ChatTurn } from "@/lib/ai";
+import { aiEnabled, contextNames, quickCommand, type ChatTurn } from "@/lib/ai";
 import { runAgent } from "@/lib/agent";
 import type { AskEvent, ChatAnswer } from "@/lib/chat";
 import { db } from "@/lib/db";
 import { items } from "@/lib/db/schema";
 import { isoDay } from "@/lib/format";
 import { log } from "@/lib/pipeline";
+import { commandContext } from "@/lib/queries";
 
 export const maxDuration = 300;
 
@@ -35,6 +36,21 @@ export async function POST(req: Request) {
         send({ type: "step", step: 0 });
         send({ type: "scope", scope: SCOPE_LABEL(scope) });
 
+        // Via veloce: se è solo un comando, le azioni arrivano da un unico passaggio del modello rapido.
+        if (!expert) {
+          const t0 = Date.now();
+          const ctx = await commandContext();
+          const quick = await quickCommand(q, ctx, turns).catch(() => null);
+          if (quick && !quick.question && quick.actions.length) {
+            send({ type: "command", actions: quick.actions, names: contextNames(ctx) });
+            await log("Messaggio all'assistente", null, `via veloce · ${quick.actions.length} azioni proposte · ${((Date.now() - t0) / 1000).toFixed(1).replace(".", ",")} s`);
+            send({ type: "done" });
+            try { controller.close(); } catch { /* già chiuso */ }
+            return;
+          }
+        }
+
+        const started = Date.now();
         const r = await runAgent({
           question: q, turns, scope, focus: body.focus, tier: expert ? "expert" : "smart", signal: req.signal,
           onEvent: (e) => send(e),
@@ -57,7 +73,7 @@ export async function POST(req: Request) {
         await log(
           expert ? "Messaggio all'assistente (Pensa meglio)" : "Messaggio all'assistente",
           null,
-          [`${r.steps.length} passi`, `${answer.sources.length} fonti`, r.actions.length && `${r.actions.length} azioni proposte`, r.facts.length && `${r.facts.length} fatti proposti`, r.model, `$${r.cost.toFixed(4)}`].filter(Boolean).join(" · "),
+          [`${((Date.now() - started) / 1000).toFixed(1).replace(".", ",")} s`, `${r.steps.length} passi`, `${answer.sources.length} fonti`, r.actions.length && `${r.actions.length} azioni proposte`, r.facts.length && `${r.facts.length} fatti proposti`, r.model, `$${r.cost.toFixed(4)}`].filter(Boolean).join(" · "),
         );
       } catch (e) {
         send({ type: "error", error: e instanceof Error ? e.message : "Errore dell'IA." });

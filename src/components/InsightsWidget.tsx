@@ -17,6 +17,7 @@ const KIND: Record<string, [string, IconName]> = {
   overdue: ["In ritardo", "alert"],
   conflict: ["Da chiarire", "link"],
   weekly: ["La tua settimana", "calendar"],
+  cleanup: ["Da riordinare", "archive"],
   other: ["Suggerimento", "ai"],
 };
 

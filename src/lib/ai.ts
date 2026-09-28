@@ -119,7 +119,7 @@ export async function runItemAction(kind: AiActionKind, item: { title: string; c
 export const COMMAND_KINDS = [
   "capture", "add_task", "complete_task", "reopen_task", "set_task_due", "update_task", "delete_task",
   "create_project", "update_project", "add_goal", "complete_goal", "reopen_goal", "delete_goal", "upsert_person",
-  "update_item", "append_item", "archive_item", "favorite_item", "link_items",
+  "update_item", "append_item", "archive_item", "favorite_item", "link_items", "merge_items",
 ] as const;
 export type CommandKind = (typeof COMMAND_KINDS)[number];
 
@@ -135,13 +135,13 @@ export const CommandActionSchema = z.object({
   remind: z.number().nullable().describe("add_task, set_task_due, update_task: minuti di anticipo del promemoria (0 = all'orario, 60 = un'ora prima); null se non richiesto"),
   prio: z.number().nullable().describe("add_task, update_task: priorità 1 (alta), 2 (media), 3 (bassa)"),
   projectId: z.string().nullable().describe("add_task, add_goal, update_task, update_project, update_item: id di un progetto esistente"),
-  itemId: z.string().nullable().describe("update_item, append_item, archive_item, favorite_item, link_items: id di un elemento della memoria"),
-  targetId: z.string().nullable().describe("link_items: id del secondo elemento"),
+  itemId: z.string().nullable().describe("update_item, append_item, archive_item, favorite_item, link_items: id di un elemento della memoria; merge_items: l'elemento che resta"),
+  targetId: z.string().nullable().describe("link_items: id del secondo elemento; merge_items: l'elemento da unire in itemId (poi archiviato)"),
   summary: z.string().nullable().describe("update_item: nuova sintesi"),
   tags: z.array(z.string()).nullable().describe("update_item: tag da aggiungere (senza #)"),
   removeTags: z.array(z.string()).nullable().describe("update_item: tag da togliere"),
   addPeople: z.array(z.string()).nullable().describe("update_item: id di persone esistenti da collegare all'elemento"),
-  reason: z.string().nullable().describe("link_items: perché i due elementi sono collegati"),
+  reason: z.string().nullable().describe("link_items: perché i due elementi sono collegati; merge_items: perché sono doppioni"),
   conflict: z.boolean().nullable().describe("link_items: true se i due elementi si contraddicono; favorite_item: false per togliere dai preferiti"),
   status: z.enum(["Attivo", "In pausa", "Chiuso"]).nullable().describe("create_project, update_project"),
   pct: z.number().nullable().describe("create_project, update_project: avanzamento 0-100"),
@@ -186,17 +186,48 @@ Trasforma la richiesta in azioni. Verranno mostrate all'utente, che le conferma:
 - append_item: aggiunge un'informazione a un elemento esistente ("aggiungi alla nota della riunione che…"). Preferiscilo a capture solo se l'utente indica chiaramente l'elemento.
 - archive_item: archivia un elemento. favorite_item: aggiunge ai preferiti (conflict false per toglierlo).
 - link_items: collega due elementi della memoria tra loro (itemId e targetId sono entrambi id di elementi), con reason; conflict true se si contraddicono.
+- merge_items: unisce due elementi che parlano della stessa cosa ("unisci…", doppioni): targetId confluisce in itemId e viene archiviato.
 - Collegare, assegnare o spostare un elemento in un progetto ("collega il documento X al progetto Y") è update_item con itemId e projectId. Collegare una persona a un elemento è update_item con addPeople. Non usare link_items per progetti o persone.
 Usa solo id presenti nel contesto. Se un riferimento è ambiguo o manca, scegli capture con il testo originale.`;
 
-export async function interpretCommand(input: { text?: string; audio?: { data: string; format: string } }, ctx: CommandContext): Promise<CommandResult> {
-  const context = `<contesto>\n${JSON.stringify(ctx)}\n</contesto>`;
-  const user: UserContent = input.audio
-    ? [{ type: "text", text: `${context}\n\nLa richiesta è nell'audio allegato: trascrivilo e interpretalo.` }, { type: "input_audio", input_audio: input.audio }]
-    : `${context}\n\n<richiesta>\n${input.text ?? ""}\n</richiesta>`;
-  const out = await complete(CommandSchema, "comando", COMMAND_SYSTEM, user, 4000, input.audio ? "files" : "smart");
-  return { transcript: out.transcript, actions: cleanActions(out.actions, ctx) };
+const QuickSchema = z.object({
+  question: z.boolean().describe("true se la richiesta è (anche) una domanda o chiede di cercare, riassumere, spiegare o ragionare sulla memoria; false se è solo un comando o un'informazione da archiviare"),
+  actions: z.array(CommandActionSchema).describe("Azioni da proporre, nell'ordine; vuoto se è solo una domanda"),
+});
+
+/**
+ * Smistamento veloce (modello "fast", una sola chiamata, contesto già incluso): i comandi diventano subito azioni
+ * da confermare; se è una domanda, `question` è true e la risposta la dà l'Assistente a passi.
+ */
+export async function quickCommand(text: string, ctx: CommandContext, turns: ChatTurn[] = []): Promise<{ question: boolean; actions: CommandAction[] }> {
+  const prev = turns.slice(-4).map((t) => `${t.role === "user" ? "Utente" : "Assistente"}: ${t.text.slice(0, 600)}`).join("\n");
+  const out = await callJSON<z.infer<typeof QuickSchema>>({
+    tier: "fast", task: "comando", name: "comando", maxTokens: 2000, temperature: 0, persona: false, timeoutMs: 30_000,
+    messages: [
+      { role: "system", content: COMMAND_SYSTEM + "\nSe la richiesta è una domanda (anche insieme a un comando) metti question true: risponderà l'Assistente, che può proporre lui le azioni." },
+      { role: "user", content: `<contesto>
+${JSON.stringify(ctx)}
+</contesto>${prev ? `
+
+<conversazione_precedente>
+${prev}
+</conversazione_precedente>` : ""}
+
+<richiesta>
+${text}
+</richiesta>` },
+    ],
+    jsonSchema: z.toJSONSchema(QuickSchema),
+    parse: (v) => QuickSchema.safeParse(v) as { success: true; data: z.infer<typeof QuickSchema> } | { success: false },
+  });
+  return { question: out.question, actions: out.question ? [] : cleanActions(out.actions, ctx) };
 }
+
+/** Nomi leggibili degli id del contesto, per le schede delle azioni. */
+export const contextNames = (ctx: CommandContext): Record<string, string> => Object.fromEntries([
+  ...[...ctx.projects, ...ctx.people].map((x) => [x.id, x.name]),
+  ...[...ctx.tasks, ...ctx.items, ...ctx.goals].map((x) => [x.id, x.title]),
+]);
 
 /** Schema JSON di un'azione proposta (per lo strumento propose_actions dell'Assistente). */
 export const commandActionJsonSchema = () => z.toJSONSchema(z.object({ actions: z.array(CommandActionSchema) }));
@@ -253,7 +284,7 @@ export function cleanActions(raw: unknown[], ctx: CommandContext): CommandAction
         case "upsert_person": return !!(a.personId || a.name?.trim());
         case "append_item": return !!a.itemId && !!a.text?.trim();
         case "update_item": case "archive_item": case "favorite_item": return !!a.itemId;
-        case "link_items": return !!a.itemId && !!a.targetId;
+        case "link_items": case "merge_items": return !!a.itemId && !!a.targetId;
         default: return false;
       }
     });

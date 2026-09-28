@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { eq, gte, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db, newId, ready } from "./db";
 import { aiLog, aiUsage, apiKeys, attachments, backgrounds, chats, embeddings, facts, goals, insights, itemPeople, items, links, people, projects, pushSubs, tasks, webhooks, type ItemKind, type Proposal } from "./db/schema";
-import { aiEnabled, classify, interpretCommand, transcribe, manualProposal, runItemAction, type AiActionKind, type AiActionResult, type CommandAction, type CommandContext, type CommandResult } from "./ai";
+import { aiEnabled, classify, contextNames, quickCommand, transcribe, manualProposal, runItemAction, type AiActionKind, type AiActionResult, type CommandAction, type CommandContext, type CommandResult } from "./ai";
 import { endSession, requireAuth } from "./auth";
 import { commandContext, memoryContext } from "./queries";
 import { isoDay, reminderFields } from "./format";
@@ -15,6 +15,7 @@ import { briefData } from "./queries";
 import { runAgent } from "./agent";
 import { budgetState, EUR_PER_USD, resetUnavailable } from "./llm";
 import { syncEmbeddings } from "./semantic";
+import { gardenMemory, type GardenStatus } from "./garden";
 import { generateInsights, morningBrief } from "./proactive";
 import { parseLook, type Look } from "./theme";
 import { FILE_ERROR, log, processAttachment, propose, reindexSoon } from "./pipeline";
@@ -409,10 +410,22 @@ export async function interpret(input: { text?: string; audio?: string }): Promi
   if (!(await aiEnabled())) return { error: "Imposta la chiave OpenRouter nelle Impostazioni per usare i comandi." };
   if (!input.text?.trim() && !input.audio) return { error: "Niente da interpretare." };
   try {
+    const t0 = Date.now();
     const text = input.audio ? await transcribe(input.audio) : input.text!.trim();
     if (!text) return { error: "Non ho sentito nulla. Riprova." };
+    const t1 = Date.now();
+    const sec = (ms: number) => `${(ms / 1000).toFixed(1).replace(".", ",")} s`;
+    const heard = input.audio ? `trascrizione ${sec(t1 - t0)} · ` : "";
+    // Prima la via veloce: un solo passaggio con il modello rapido e il contesto già pronto.
+    const ctx = await commandContext();
+    const quick = await quickCommand(text, ctx).catch(() => null);
+    if (quick && !quick.question && quick.actions.length) {
+      await log(input.audio ? "Comando vocale" : "Comando scritto", null, `${heard}comando ${sec(Date.now() - t1)} · proposte ${quick.actions.length} azioni · via veloce`);
+      return { transcript: text, actions: quick.actions, names: contextNames(ctx), reply: "" };
+    }
+    // Domande (o comandi non capiti): l'Assistente a passi cerca nella memoria.
     const r = await runAgent({ question: text, mode: "command" });
-    await log(input.audio ? "Comando vocale" : "Comando scritto", null, `${r.steps.length} passi · proposte ${r.actions.length} azioni · ${r.model}`);
+    await log(input.audio ? "Comando vocale" : "Comando scritto", null, `${heard}assistente ${sec(Date.now() - t1)} · ${r.steps.length} passi · proposte ${r.actions.length} azioni · ${r.model}`);
     return { transcript: text, actions: r.actions, names: r.names, reply: r.actions.length ? "" : r.text.replace(/⟦[^⟧]*⟧/g, "").replace(/ +([.,;:])/g, "$1").trim() };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Errore dell'IA." };
@@ -621,6 +634,7 @@ export type AiOverview = {
   byModel: { model: string; eur: number; calls: number }[];
   warning: { at: number; model: string; tier: string; message: string } | null;
   embed: { done: number; total: number; model: string; error: string | null; at: number } | null;
+  garden: GardenStatus | null;
 };
 
 /** Spesa del mese per compito e per modello, avvisi sui modelli e stato dell'indice per significato. */
@@ -646,7 +660,16 @@ export async function aiOverview(): Promise<AiOverview> {
     byModel: group((r) => r.model).map(({ k, eur, calls }) => ({ model: k, eur, calls })),
     warning: warning && Date.now() - warning.at < 7 * 86400000 ? warning : null,
     embed: emb ? { done: emb.done ?? 0, total: emb.total ?? 0, model: emb.model ?? cfg.models.embed, error: emb.error ?? null, at: emb.at } : null,
+    garden: parse<GardenStatus>(await getSetting("garden_status")),
   };
+}
+
+/** Cura della memoria subito (pulsante nelle Impostazioni); di solito parte da sola ogni notte. */
+export async function runGarden(): Promise<GardenStatus> {
+  await guard();
+  const s = await gardenMemory();
+  refreshAll();
+  return s;
 }
 
 /** Aggiorna subito l'indice per significato. */

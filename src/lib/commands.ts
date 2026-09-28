@@ -1,7 +1,7 @@
 import "server-only";
 import { eq, sql } from "drizzle-orm";
 import { db, newId } from "./db";
-import { goals, itemPeople, items, links, people, projects, tasks } from "./db/schema";
+import { attachments, goals, itemPeople, items, links, people, projects, tasks } from "./db/schema";
 import type { CommandAction } from "./ai";
 import { captureText } from "./capture";
 import { reminderFields } from "./format";
@@ -150,9 +150,46 @@ ${a.text.trim()}` : a.text.trim(), updatedAt: new Date() }).where(eq(items.id, a
         await db.insert(links).values({ fromId: a.itemId, toId: a.targetId, kind: a.conflict ? "conflict" : "related", reason: a.reason?.trim() ?? "" })
           .onConflictDoUpdate({ target: [links.fromId, links.toId], set: { kind: a.conflict ? "conflict" : "related", reason: a.reason?.trim() ?? "" } });
         break;
+      case "merge_items":
+        if (!a.itemId || !a.targetId || a.itemId === a.targetId) continue;
+        if (!(await mergeItems(a.itemId, a.targetId))) continue;
+        break;
     }
     done.push(a.label);
     await log(origin === "web" ? a.label : `API: ${a.label}`, a.itemId ?? null, origin === "web" ? "Confermata da te" : "Eseguita via API");
   }
   return done.length;
+}
+
+/**
+ * Unisce `dupId` in `keepId`: il testo si aggiunge in coda, tag, persone, collegamenti, attività e allegati passano
+ * all'elemento che resta, il doppione viene archiviato (non cancellato: si può recuperare).
+ */
+async function mergeItems(keepId: string, dupId: string): Promise<boolean> {
+  const [keep] = await db.select().from(items).where(eq(items.id, keepId));
+  const [dup] = await db.select().from(items).where(eq(items.id, dupId));
+  if (!keep || !dup || dup.status === "archived") return false;
+  const extra = dup.content.trim() && !keep.content.includes(dup.content.trim()) ? `
+
+— Unito da «${dup.title}»:
+${dup.content.trim()}` : "";
+  await db.update(items).set({
+    content: keep.content + extra,
+    tags: [...new Set([...keep.tags, ...dup.tags])],
+    projectId: keep.projectId ?? dup.projectId,
+    favorite: keep.favorite || dup.favorite,
+    updatedAt: new Date(),
+  }).where(eq(items.id, keepId));
+  for (const r of await db.select().from(itemPeople).where(eq(itemPeople.itemId, dupId))) {
+    await db.insert(itemPeople).values({ itemId: keepId, personId: r.personId }).onConflictDoNothing();
+  }
+  for (const l of await db.select().from(links).where(sql`${links.fromId} = ${dupId} OR ${links.toId} = ${dupId}`)) {
+    const from = l.fromId === dupId ? keepId : l.fromId, to = l.toId === dupId ? keepId : l.toId;
+    if (from !== to) await db.insert(links).values({ fromId: from, toId: to, kind: l.kind, reason: l.reason }).onConflictDoNothing();
+  }
+  await db.delete(links).where(sql`${links.fromId} = ${dupId} OR ${links.toId} = ${dupId}`);
+  await db.update(tasks).set({ sourceItemId: keepId }).where(eq(tasks.sourceItemId, dupId));
+  await db.update(attachments).set({ itemId: keepId }).where(eq(attachments.itemId, dupId));
+  await db.update(items).set({ status: "archived", updatedAt: new Date() }).where(eq(items.id, dupId));
+  return true;
 }

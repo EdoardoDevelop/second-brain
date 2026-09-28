@@ -1,7 +1,7 @@
 import "server-only";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "./db";
-import { itemPeople, items, people, projects } from "./db/schema";
+import { itemPeople, items, people, projects, tasks } from "./db/schema";
 import { cleanActions, commandActionJsonSchema, type ChatTurn, type CommandAction, type CommandContext } from "./ai";
 import { summarizeItems, TOOL_BY_NAME } from "./api-core";
 import { isoDay } from "./format";
@@ -39,7 +39,8 @@ export type AgentResult = {
 };
 
 const READ_TOOLS = ["today", "get_item", "recent_items", "list_tasks", "list_projects", "get_project", "list_people", "get_person"] as const;
-const MAX_STEPS = 8;
+// Il contesto di base è già nel prompt: bastano pochi passi (ognuno è una chiamata al modello).
+const MAX_STEPS = 5;
 const MAX_TOOL_CHARS = 14000;
 
 function toolDefs(): LlmTool[] {
@@ -126,12 +127,30 @@ async function focusInfo(focus?: string): Promise<string> {
   return "";
 }
 
-function systemPrompt(o: { today: string; weekday: string; scope: string; focus: string; mode: "chat" | "command" }) {
+/** Quadro di partenza nel prompt (progetti, persone, attività aperte, elementi recenti): evita i passi di sola lettura. */
+async function basics(titles: Map<string, string>): Promise<string> {
+  const [ps, pp, ts, its] = await Promise.all([
+    db.select({ id: projects.id, name: projects.name, status: projects.status, next: projects.next }).from(projects),
+    db.select({ id: people.id, name: people.name, role: people.role, org: people.org }).from(people),
+    db.select({ id: tasks.id, title: tasks.title, due: tasks.due, projectId: tasks.projectId }).from(tasks).where(eq(tasks.done, false)).limit(80),
+    db.select({ id: items.id, type: items.type, title: items.title, summary: items.summary, createdAt: items.createdAt }).from(items).where(eq(items.status, "memory")).orderBy(desc(items.createdAt)).limit(30),
+  ]);
+  for (const x of ps) titles.set(x.id, x.name);
+  for (const x of pp) titles.set(x.id, x.name);
+  for (const x of its) titles.set(x.id, x.title);
+  return JSON.stringify({
+    progetti: ps, persone: pp, attivita_aperte: ts,
+    elementi_recenti: its.map((i) => ({ id: i.id, tipo: i.type, titolo: i.title, sintesi: (i.summary ?? "").slice(0, 220), data: isoDay(i.createdAt) })),
+  });
+}
+
+function systemPrompt(o: { today: string; weekday: string; scope: string; focus: string; mode: "chat" | "command"; basics: string }) {
   return `Sei l'Assistente del Second Brain personale dell'utente: la sua memoria di note, documenti, decisioni, riunioni, progetti, persone, attività e obiettivi. Rispondi in italiano.
 Oggi è ${o.weekday} ${o.today}. Ambito delle ricerche: ${o.scope}.${o.focus ? "\n" + o.focus : ""}
 
 Come lavori:
-- Prima di rispondere cerca e leggi quello che serve con gli strumenti. Per domande sulla memoria usa search_memory (anche più volte, con parole diverse) e apri con get_item gli elementi utili prima di citarli. Per la giornata usa today; per attività, progetti e persone gli strumenti dedicati.
+- Sotto trovi già progetti, persone, attività aperte ed elementi recenti con la sintesi: se bastano, rispondi subito, senza strumenti.
+- Altrimenti cerca con search_memory e apri con get_item solo gli elementi di cui ti serve il testo completo. Sii rapido: chiama più strumenti nello stesso passo (più ricerche o più get_item insieme) invece che uno alla volta. Per la giornata usa today.
 - Non inventare: usa solo ciò che trovi. Se le informazioni mancano o si contraddicono, dillo (indica la più recente).
 - Non scrivere nulla prima di aver usato gli strumenti necessari: niente "Ora cerco…".
 - Richieste di modifica (aggiungere, completare, spostare, collegare, archiviare, ricordare di…, "segna che…") → propose_actions con le azioni. Non dire mai che le hai eseguite: l'utente le conferma. Date relative convertite in YYYY-MM-DD rispetto a oggi; il nome di un giorno indica la sua prossima occorrenza dopo oggi.
@@ -144,7 +163,11 @@ Formato della risposta:
 - Alla fine, su righe separate:
 [[FONTI: id1, id2]] con gli id degli elementi che hai usato (vuoto se nessuno)
 [[NOTA: …]] solo se mancano informazioni o sono in conflitto
-[[DOMANDE: domanda 1 | domanda 2 | domanda 3]] 2-3 domande brevi che l'utente potrebbe farti dopo, utili e specifiche`;
+[[DOMANDE: domanda 1 | domanda 2 | domanda 3]] 2-3 domande brevi che l'utente potrebbe farti dopo, utili e specifiche
+
+<quadro_di_partenza>
+${o.basics}
+</quadro_di_partenza>`;
 }
 
 const CITE = /⟦\s*([A-Za-z0-9_-]+)\s*⟧/g;
@@ -167,13 +190,13 @@ export async function runAgent(o: {
   const tier = o.tier ?? "smart";
   const scope = await scopeInfo(o.scope ?? "all");
   const weekday = new Intl.DateTimeFormat("it-IT", { timeZone: "Europe/Rome", weekday: "long" }).format(new Date());
+  const titles = new Map<string, string>();
   const messages: LlmMessage[] = [
-    { role: "system", content: systemPrompt({ today: isoDay(), weekday, scope: scope.label, focus: await focusInfo(o.focus), mode: o.mode ?? "chat" }) },
+    { role: "system", content: systemPrompt({ today: isoDay(), weekday, scope: scope.label, focus: await focusInfo(o.focus), mode: o.mode ?? "chat", basics: await basics(titles) }) },
     ...(o.turns ?? []).slice(-8).map((t): LlmMessage => ({ role: t.role, content: t.text })),
     { role: "user", content: o.question },
   ];
   const tools = toolDefs();
-  const titles = new Map<string, string>();
   const read = new Set<string>();
   const steps: string[] = [];
   const proposed: unknown[] = [];
@@ -182,10 +205,6 @@ export async function runAgent(o: {
   let model = "";
   let usedTier: AiTier = tier;
   let final = "";
-
-  // Titoli già noti (per le etichette dei passi): progetti e persone.
-  const [ps, pp] = await Promise.all([db.select({ id: projects.id, name: projects.name }).from(projects), db.select({ id: people.id, name: people.name }).from(people)]);
-  for (const x of [...ps, ...pp]) titles.set(x.id, x.name);
 
   for (let step = 0; step <= MAX_STEPS; step++) {
     let shown = false;

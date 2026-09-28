@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition, type ReactNode } from "react";
 import { Icon } from "@/components/ui";
 import { SetCard } from "./SettingsShell";
 import {
-  aiOverview, compareRun, listEmbeddingModels, listModels, reindexNow, saveAiSettings, testAiKey,
+  aiOverview, compareRun, listEmbeddingModels, listModels, reindexNow, runGarden, saveAiSettings, testAiKey,
   type AiOverview, type CompareResult, type KeyStatus, type ModelInfo,
 } from "@/lib/actions";
 
@@ -94,7 +94,7 @@ const TASK_LABEL: Record<string, string> = {
   assistente: "Assistente", comando: "Comandi", proposta: "Classificazione", lettura_file: "Lettura file", trascrizione: "Trascrizioni",
   sintesi: "Sintesi progetti e persone", azione: "Azioni sugli elementi", riepilogo_mattino: "Riepilogo del mattino", suggerimenti: "Suggerimenti",
   argomenti_notizie: "Notizie · argomenti", notizie_per_te: "Notizie · scelta", indicizzazione: "Indice per significato", ricerca: "Ricerca per significato",
-  confronto: "Confronto modelli", risposta: "Risposte",
+  confronto: "Confronto modelli", risposta: "Risposte", cura_memoria: "Cura della memoria",
 };
 
 export function AiSettings(props: { keyMasked: string | null; keySource: "app" | "env" | null; models: Models; defaults: Models; privacy: Privacy; budgetEur: number }) {
@@ -210,6 +210,10 @@ export function AiSettings(props: { keyMasked: string | null; keySource: "app" |
 
       <SetCard title="Ricerca per significato" icon="search" desc="Trova i contenuti anche con parole diverse. L'indice si aggiorna da solo ogni 10 minuti.">
         <IndexBox over={over} onDone={() => aiOverview().then(setOver)} />
+      </SetCard>
+
+      <SetCard title="Cura della memoria" icon="archive" desc="Ogni notte l'IA riordina la memoria: collega da sola gli elementi affini e uniforma i tag; doppioni e contenuti superati li propone nella Home («Da riordinare»), da confermare.">
+        <GardenBox over={over} onDone={() => aiOverview().then(setOver)} />
       </SetCard>
 
       <SetCard title="Confronta modelli" icon="graph" desc="Le stesse domande sulla tua memoria a più modelli: risposte, tempi e costi affiancati. Solo lettura: le azioni proposte non si eseguono. Costo tipico: pochi centesimi.">
@@ -333,6 +337,24 @@ function IndexBox({ over, onDone }: { over: AiOverview | null; onDone: () => voi
   );
 }
 
+function GardenBox({ over, onDone }: { over: AiOverview | null; onDone: () => void }) {
+  const [pending, start] = useTransition();
+  const g = over?.garden;
+  const when = g ? new Date(g.at).toLocaleString("it-IT", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+  return (
+    <Row
+      title="Ultimo riordino"
+      desc={!g ? "Non ancora eseguito: parte da solo stanotte."
+        : g.error ? <span style={{ color: "var(--danger)" }}>{when} · errore: {g.error}</span>
+        : `${when} · ${g.linked} collegamenti aggiunti · ${g.retagged} elementi con tag uniformati · ${g.proposed} proposte da confermare`}
+    >
+      <button className="btn btn-secondary" disabled={pending} onClick={() => start(async () => { await runGarden(); onDone(); })} style={{ gap: 6 }}>
+        {pending ? <span className="spin" /> : <Icon name="refresh" size={14} />}Riordina ora
+      </button>
+    </Row>
+  );
+}
+
 const QUESTIONS = [
   "Cosa devo fare questa settimana e cosa è più urgente?",
   "Riassumi le decisioni più recenti e perché sono state prese",
@@ -340,7 +362,7 @@ const QUESTIONS = [
   "Con chi lavoro di più e su cosa?",
   "Ci sono informazioni in conflitto nella memoria?",
 ];
-const CANDIDATES = ["deepseek/deepseek-v4-pro", "moonshotai/kimi-k2.6", "anthropic/claude-haiku-4.5"];
+const CANDIDATES = ["anthropic/claude-haiku-4.5", "deepseek/deepseek-v4-pro", "google/gemini-3.5-flash"];
 
 /** Confronto modelli sulla memoria vera: stesse domande, risposte affiancate con tempi e costi. Solo lettura. */
 function ModelCompare({ list, current, onUse }: { list: ModelInfo[] | null; current: string; onUse: (id: string) => void }) {

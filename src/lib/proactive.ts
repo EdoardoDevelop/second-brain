@@ -1,6 +1,6 @@
 import "server-only";
 import { z } from "zod";
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, ne } from "drizzle-orm";
 import { db, newId } from "./db";
 import { goals, insights, itemPeople, items, links, people, projects, tasks } from "./db/schema";
 import { cleanActions, CommandActionSchema, type CommandAction } from "./ai";
@@ -142,7 +142,8 @@ export type InsightRow = { id: string; kind: string; title: string; body: string
 export async function generateInsights(): Promise<number> {
   const s = await signals();
   const empty = !s.clusters.length && !s.quiet.length && !s.stale.length && !s.overdue.length && !s.conflicts.length && !s.week;
-  await db.update(insights).set({ status: "dismissed" }).where(eq(insights.status, "new"));
+  // Le proposte della cura notturna della memoria («cleanup») restano finché non si decidono.
+  await db.update(insights).set({ status: "dismissed" }).where(and(eq(insights.status, "new"), ne(insights.kind, "cleanup")));
   if (empty) { await log("Suggerimenti", null, "Nessun segnale"); return 0; }
 
   const out = await callJSON<z.infer<typeof InsightLoose>>({
