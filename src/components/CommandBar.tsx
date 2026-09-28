@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { Icon } from "@/components/ui";
 import type { IconName } from "@/lib/icons";
-import { interpret, runCommand } from "@/lib/actions";
+import { addFact, interpret, runCommand } from "@/lib/actions";
 import type { CommandAction, CommandKind } from "@/lib/ai";
 import { dueInfo } from "@/lib/format";
 import { useRecorder } from "./useRecorder";
@@ -35,7 +35,8 @@ export const KIND: Record<CommandKind, [string, IconName]> = {
 
 const PRIO = ["", "Alta", "Media", "Bassa"];
 
-type Proposal = { transcript: string; actions: (CommandAction & { on: boolean })[]; names: Record<string, string>; reply: string };
+type Fact = { text: string; state: "review" | "saved" | "discarded" };
+type Proposal = { transcript: string; actions: (CommandAction & { on: boolean })[]; names: Record<string, string>; reply: string; facts: Fact[] };
 type Phase = "idle" | "recording" | "thinking" | "review" | "saving" | "done";
 
 /** Barra dei comandi: voce o testo → azioni proposte dall'IA → conferma. */
@@ -55,7 +56,7 @@ export function CommandBar({ onClose, startRecording }: { onClose: () => void; s
     start(async () => {
       const res = await interpret(input);
       if ("error" in res) { setError(res.error); setPhase("idle"); return; }
-      setProposal({ ...res, actions: res.actions.map((a) => ({ ...a, on: true })) });
+      setProposal({ ...res, actions: res.actions.map((a) => ({ ...a, on: true })), facts: res.facts.map((t): Fact => ({ text: t, state: "review" })) });
       if (input.audio) setText(res.transcript);
       setPhase("review");
     });
@@ -78,6 +79,13 @@ export function CommandBar({ onClose, startRecording }: { onClose: () => void; s
     return () => { window.removeEventListener("keydown", onKey); release(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const decideFact = (k: number, keep: boolean) => {
+    const f = proposal?.facts[k];
+    if (!f) return;
+    if (keep) addFact(f.text, "comando");
+    setProposal((p) => p && { ...p, facts: p.facts.map((x, h) => (h === k ? { ...x, state: keep ? "saved" : "discarded" } : x)) });
+  };
 
   const update = (i: number, patch: Partial<CommandAction & { on: boolean }>) =>
     setProposal((p) => p && { ...p, actions: p.actions.map((a, j) => (j === i ? { ...a, ...patch } : a)) });
@@ -140,8 +148,20 @@ export function CommandBar({ onClose, startRecording }: { onClose: () => void; s
               {(phase === "review" || phase === "saving") && proposal && (
                 <>
                   {voice && proposal.transcript && <div className="muted" style={{ display: "flex", gap: 8, fontSize: 13 }}><Icon name="mic" size={14} style={{ flex: "none", marginTop: 2 }} /><span>«{proposal.transcript}»</span></div>}
+                  {proposal.facts.map((f, k) => (
+                    <div key={k} className="fact-card" data-state={f.state}>
+                      <Icon name="ai" size={14} />
+                      <span style={{ flex: 1 }}>{f.state === "saved" ? "Ricorderò: " : f.state === "discarded" ? "Non lo ricorderò: " : "Vuoi che ricordi che "}<b style={{ fontWeight: 500 }}>{f.text}</b>{f.state === "review" ? "?" : ""}</span>
+                      {f.state === "review" && (
+                        <>
+                          <button className="btn btn-ghost" onClick={() => decideFact(k, false)}>No</button>
+                          <button className="btn btn-primary" onClick={() => decideFact(k, true)}>Ricorda</button>
+                        </>
+                      )}
+                    </div>
+                  ))}
                   {proposal.actions.length === 0 ? (
-                    proposal.reply
+                    proposal.facts.length ? null : proposal.reply
                       ? <div className="cmd-reply">{proposal.reply.split(/\n\s*\n/).map((p, i) => <p key={i}>{p.replace(/\*\*/g, "")}</p>)}</div>
                       : <p className="muted" style={{ margin: 0, fontSize: 14 }}>Non ho capito cosa fare. Riprova con parole diverse.</p>
                   ) : (

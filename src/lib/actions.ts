@@ -405,7 +405,7 @@ function commandNames(ctx: CommandContext): Record<string, string> {
  * Nessuna scrittura, solo proposte da confermare. Audio in base64 (WAV): prima si trascrive.
  * Se è una domanda, `reply` contiene la risposta.
  */
-export async function interpret(input: { text?: string; audio?: string }): Promise<(CommandResult & { names: Record<string, string>; reply: string }) | { error: string }> {
+export async function interpret(input: { text?: string; audio?: string }): Promise<(CommandResult & { names: Record<string, string>; reply: string; facts: string[] }) | { error: string }> {
   await guard();
   if (!(await aiEnabled())) return { error: "Imposta la chiave OpenRouter nelle Impostazioni per usare i comandi." };
   if (!input.text?.trim() && !input.audio) return { error: "Niente da interpretare." };
@@ -419,14 +419,14 @@ export async function interpret(input: { text?: string; audio?: string }): Promi
     // Prima la via veloce: un solo passaggio con il modello rapido e il contesto già pronto.
     const ctx = await commandContext();
     const quick = await quickCommand(text, ctx).catch(() => null);
-    if (quick && !quick.question && quick.actions.length) {
-      await log(input.audio ? "Comando vocale" : "Comando scritto", null, `${heard}comando ${sec(Date.now() - t1)} · proposte ${quick.actions.length} azioni · via veloce`);
-      return { transcript: text, actions: quick.actions, names: contextNames(ctx), reply: "" };
+    if (quick && !quick.question && (quick.actions.length || quick.facts.length)) {
+      await log(input.audio ? "Comando vocale" : "Comando scritto", null, `${heard}comando ${sec(Date.now() - t1)} · proposte ${quick.actions.length} azioni${quick.facts.length ? ` e ${quick.facts.length} fatti` : ""} · via veloce`);
+      return { transcript: text, actions: quick.actions, names: contextNames(ctx), reply: "", facts: quick.facts };
     }
     // Domande (o comandi non capiti): l'Assistente a passi cerca nella memoria.
     const r = await runAgent({ question: text, mode: "command" });
     await log(input.audio ? "Comando vocale" : "Comando scritto", null, `${heard}assistente ${sec(Date.now() - t1)} · ${r.steps.length} passi · proposte ${r.actions.length} azioni · ${r.model}`);
-    return { transcript: text, actions: r.actions, names: r.names, reply: r.actions.length ? "" : r.text.replace(/⟦[^⟧]*⟧/g, "").replace(/ +([.,;:])/g, "$1").trim() };
+    return { transcript: text, actions: r.actions, names: r.names, facts: r.facts, reply: r.actions.length ? "" : r.text.replace(/⟦[^⟧]*⟧/g, "").replace(/ +([.,;:])/g, "$1").trim() };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Errore dell'IA." };
   }

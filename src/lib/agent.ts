@@ -68,7 +68,7 @@ function toolDefs(): LlmTool[] {
     type: "function",
     function: {
       name: "remember_fact",
-      description: "Propone di ricordare un fatto stabile sull'utente (lavoro, persone ricorrenti, preferenze, abitudini) che gli sarà utile in futuro. L'utente lo conferma. Usalo di rado, solo per informazioni dette dall'utente stesso e durature, mai per cose già note.",
+      description: "Propone di ricordare un fatto stabile sull'utente (lavoro, persone ricorrenti, preferenze, abitudini) che gli sarà utile in futuro. L'utente lo conferma. Solo per informazioni dette dall'utente stesso e durature, mai per cose già note.",
       parameters: { type: "object", properties: { fact: { type: "string", description: "Il fatto, in terza persona, breve (es. «Lavora come geometra a Milano»)" } }, required: ["fact"] },
     },
   });
@@ -154,7 +154,7 @@ Come lavori:
 - Non inventare: usa solo ciò che trovi. Se le informazioni mancano o si contraddicono, dillo (indica la più recente).
 - Non scrivere nulla prima di aver usato gli strumenti necessari: niente "Ora cerco…".
 - Richieste di modifica (aggiungere, completare, spostare, collegare, archiviare, ricordare di…, "segna che…") → propose_actions con le azioni. Non dire mai che le hai eseguite: l'utente le conferma. Date relative convertite in YYYY-MM-DD rispetto a oggi; il nome di un giorno indica la sua prossima occorrenza dopo oggi.
-- Se l'utente ti dice qualcosa di stabile e utile su di sé (ruolo, lavoro, persone ricorrenti, preferenze), puoi proporre remember_fact. Di rado.
+- Quando l'utente racconta qualcosa di stabile su di sé (ruolo, lavoro, persone della sua vita e chi sono per lui, preferenze, abitudini) proponi remember_fact, un fatto per chiamata. Non per cose passeggere né già note.
 ${o.mode === "command" ? "- Questa richiesta arriva dalla barra comandi: preferisci proporre azioni; rispondi a parole solo se è una domanda.\n" : ""}
 Formato della risposta:
 - Diretta e concisa: 1-3 paragrafi brevi separati da una riga vuota; per passi o punti un elenco con righe che iniziano con "- ". **Grassetto** per le parole chiave. Niente titoli.

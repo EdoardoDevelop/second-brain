@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { ne } from "drizzle-orm";
 import { db } from "./db";
-import { ITEM_TYPES, people, projects, type Proposal } from "./db/schema";
+import { facts, ITEM_TYPES, people, projects, type Proposal } from "./db/schema";
 import { callJSON, callLLM } from "./llm";
 import { getAiConfig, type AiTier } from "./settings";
 
@@ -193,21 +193,23 @@ Usa solo id presenti nel contesto. Se un riferimento è ambiguo o manca, scegli 
 const QuickSchema = z.object({
   question: z.boolean().describe("true se la richiesta è (anche) una domanda o chiede di cercare, riassumere, spiegare o ragionare sulla memoria; false se è solo un comando o un'informazione da archiviare"),
   actions: z.array(CommandActionSchema).describe("Azioni da proporre, nell'ordine; vuoto se è solo una domanda"),
+  facts: z.array(z.string()).describe("Fatti stabili che l'utente racconta su di sé e che conviene ricordare (lavoro, ruolo, persone della sua vita e che cosa sono per lui, preferenze, abitudini), in terza persona e brevi, es. «Dal 19 ottobre 2026 lavora in Easytech», «Diego Bernardi è un ex collega di ComputerRivo e futuro collega in Easytech». Mai quelli già noti né cose passeggere. Vuoto se non ce ne sono."),
 });
 
 /**
  * Smistamento veloce (modello "fast", una sola chiamata, contesto già incluso): i comandi diventano subito azioni
  * da confermare; se è una domanda, `question` è true e la risposta la dà l'Assistente a passi.
  */
-export async function quickCommand(text: string, ctx: CommandContext, turns: ChatTurn[] = []): Promise<{ question: boolean; actions: CommandAction[] }> {
+export async function quickCommand(text: string, ctx: CommandContext, turns: ChatTurn[] = []): Promise<{ question: boolean; actions: CommandAction[]; facts: string[] }> {
   const prev = turns.slice(-4).map((t) => `${t.role === "user" ? "Utente" : "Assistente"}: ${t.text.slice(0, 600)}`).join("\n");
+  const known = (await db.select({ text: facts.text }).from(facts).limit(80)).map((f) => f.text);
   const out = await callJSON<z.infer<typeof QuickSchema>>({
     tier: "fast", task: "comando", name: "comando", maxTokens: 2000, temperature: 0, persona: false, timeoutMs: 30_000,
     messages: [
       { role: "system", content: COMMAND_SYSTEM + "\nSe la richiesta è una domanda (anche insieme a un comando) metti question true: risponderà l'Assistente, che può proporre lui le azioni." },
       { role: "user", content: `<contesto>
 ${JSON.stringify(ctx)}
-</contesto>${prev ? `
+</contesto>${known.length ? `\n\n<fatti_gia_noti_sull_utente>\n${known.join("\n")}\n</fatti_gia_noti_sull_utente>` : ""}${prev ? `
 
 <conversazione_precedente>
 ${prev}
@@ -220,7 +222,9 @@ ${text}
     jsonSchema: z.toJSONSchema(QuickSchema),
     parse: (v) => QuickSchema.safeParse(v) as { success: true; data: z.infer<typeof QuickSchema> } | { success: false },
   });
-  return { question: out.question, actions: out.question ? [] : cleanActions(out.actions, ctx) };
+  const lower = new Set(known.map((k) => k.toLowerCase()));
+  const newFacts = [...new Set(out.facts.map((f) => f.replace(/\s+/g, " ").trim().slice(0, 300)))].filter((f) => f.length > 3 && !lower.has(f.toLowerCase())).slice(0, 4);
+  return { question: out.question, actions: out.question ? [] : cleanActions(out.actions, ctx), facts: newFacts };
 }
 
 /** Nomi leggibili degli id del contesto, per le schede delle azioni. */

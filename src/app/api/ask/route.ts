@@ -41,9 +41,10 @@ export async function POST(req: Request) {
           const t0 = Date.now();
           const ctx = await commandContext();
           const quick = await quickCommand(q, ctx, turns).catch(() => null);
-          if (quick && !quick.question && quick.actions.length) {
-            send({ type: "command", actions: quick.actions, names: contextNames(ctx) });
-            await log("Messaggio all'assistente", null, `via veloce · ${quick.actions.length} azioni proposte · ${((Date.now() - t0) / 1000).toFixed(1).replace(".", ",")} s`);
+          if (quick && !quick.question && (quick.actions.length || quick.facts.length)) {
+            if (quick.actions.length) send({ type: "command", actions: quick.actions, names: contextNames(ctx) });
+            if (quick.facts.length) send({ type: "facts", facts: quick.facts });
+            await log("Messaggio all'assistente", null, `via veloce · ${quick.actions.length} azioni e ${quick.facts.length} fatti proposti · ${((Date.now() - t0) / 1000).toFixed(1).replace(".", ",")} s`);
             send({ type: "done" });
             try { controller.close(); } catch { /* già chiuso */ }
             return;
