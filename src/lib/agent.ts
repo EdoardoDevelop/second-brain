@@ -1,7 +1,8 @@
 import "server-only";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "./db";
-import { itemPeople, items, people, projects, tasks } from "./db/schema";
+import { facts as factsTable, itemPeople, items, people, projects, tasks } from "./db/schema";
+import type { ProposedFact } from "./chat";
 import { cleanActions, commandActionJsonSchema, type ChatTurn, type CommandAction, type CommandContext } from "./ai";
 import { summarizeItems, TOOL_BY_NAME } from "./api-core";
 import { isoDay } from "./format";
@@ -31,7 +32,7 @@ export type AgentResult = {
   followUps: string[];
   actions: CommandAction[];
   names: Record<string, string>;
-  facts: string[];
+  facts: ProposedFact[];
   steps: string[];
   model: string;
   tier: AiTier;
@@ -69,7 +70,14 @@ function toolDefs(): LlmTool[] {
     function: {
       name: "remember_fact",
       description: "Propone di ricordare un fatto stabile sull'utente (lavoro, persone ricorrenti, preferenze, abitudini) che gli sarà utile in futuro. L'utente lo conferma. Solo per informazioni dette dall'utente stesso e durature, mai per cose già note.",
-      parameters: { type: "object", properties: { fact: { type: "string", description: "Il fatto, in terza persona, breve (es. «Lavora come geometra a Milano»)" } }, required: ["fact"] },
+      parameters: {
+        type: "object",
+        properties: {
+          fact: { type: "string", description: "Il fatto, in terza persona, breve (es. «Lavora come geometra a Milano»)" },
+          replaces: { type: "array", items: { type: "string" }, description: "Testo esatto dei fatti già confermati che questo rende non più veri (es. il lavoro precedente); vuoto se nessuno" },
+        },
+        required: ["fact"],
+      },
     },
   });
   return defs;
@@ -200,7 +208,7 @@ export async function runAgent(o: {
   const read = new Set<string>();
   const steps: string[] = [];
   const proposed: unknown[] = [];
-  const facts: string[] = [];
+  const facts: { text: string; replaces: string[] }[] = [];
   let cost = 0;
   let model = "";
   let usedTier: AiTier = tier;
@@ -276,10 +284,21 @@ export async function runAgent(o: {
     ]);
   }
 
-  return { text, note, sources, read: read.size, followUps, actions, names, facts: [...new Set(facts)], steps, model, tier: usedTier, cost };
+  // Fatti proposti: i «sostituisce» indicati a parole si risolvono sui fatti confermati.
+  let proposedFacts: ProposedFact[] = [];
+  if (facts.length) {
+    const known = await db.select({ id: factsTable.id, text: factsTable.text }).from(factsTable).where(eq(factsTable.status, "confirmed"));
+    const norm = (x: string) => x.toLowerCase().replace(/[«»"'.]/g, "").replace(/\s+/g, " ").trim();
+    const find = (x: string) => known.find((k) => norm(k.text) === norm(x)) ?? known.find((k) => norm(k.text).includes(norm(x)) || norm(x).includes(norm(k.text)));
+    const seen = new Set<string>();
+    proposedFacts = facts.filter((f) => !seen.has(f.text.toLowerCase()) && seen.add(f.text.toLowerCase()) && !known.some((k) => norm(k.text) === norm(f.text)))
+      .map((f) => ({ text: f.text, replaces: [...new Map(f.replaces.map(find).filter((k): k is { id: string; text: string } => !!k).map((k) => [k.id, k])).values()] }));
+  }
+
+  return { text, note, sources, read: read.size, followUps, actions, names, facts: proposedFacts, steps, model, tier: usedTier, cost };
 }
 
-type ToolState = { scope: { within?: Set<string> }; read: Set<string>; titles: Map<string, string>; proposed: unknown[]; facts: string[] };
+type ToolState = { scope: { within?: Set<string> }; read: Set<string>; titles: Map<string, string>; proposed: unknown[]; facts: { text: string; replaces: string[] }[] };
 
 async function runTool(name: string, args: Record<string, unknown>, st: ToolState): Promise<unknown> {
   if (name === "search_memory") {
@@ -301,7 +320,8 @@ async function runTool(name: string, args: Record<string, unknown>, st: ToolStat
   }
   if (name === "remember_fact") {
     const f = String(args.fact ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
-    if (f) st.facts.push(f);
+    const replaces = Array.isArray(args.replaces) ? args.replaces.map((x) => String(x).trim()).filter(Boolean).slice(0, 4) : [];
+    if (f) st.facts.push({ text: f, replaces });
     return { ok: true, message: "Proposto all'utente, che deciderà se ricordarlo." };
   }
   const tool = TOOL_BY_NAME.get(name);

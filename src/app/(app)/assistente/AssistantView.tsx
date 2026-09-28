@@ -180,7 +180,7 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
           else if (e.type === "command") patchAt(at, { cards: e.actions.map((a) => ({ ...a, on: true })), names: e.names });
           else if (e.type === "tool") patchAt(at, (m) => ({ tools: [...(m.tools ?? []), e.label], step: 1 }));
           else if (e.type === "reset") patchAt(at, (m) => ({ answer: m.answer && "text" in m.answer ? { ...m.answer, text: "" } : m.answer }));
-          else if (e.type === "facts") patchAt(at, { facts: e.facts.map((text): FactCard => ({ text, state: "review" })) });
+          else if (e.type === "facts") patchAt(at, { facts: e.facts.map((f): FactCard => ({ ...f, state: "review" })) });
           else if (e.type === "error") failed = e.error;
         }
       }
@@ -287,11 +287,11 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
                       {m.facts.map((f, k) => (
                         <div key={k} className="fact-card" data-state={f.state}>
                           <Icon name="ai" size={14} />
-                          <span style={{ flex: 1 }}>{f.state === "saved" ? "Ricorderò: " : f.state === "discarded" ? "Non lo ricorderò: " : "Vuoi che ricordi che "}<b style={{ fontWeight: 500 }}>{f.text}</b>{f.state === "review" ? "?" : ""}</span>
+                          <span style={{ flex: 1 }}>{f.state === "saved" ? "Ricorderò: " : f.state === "discarded" ? "Non lo ricorderò: " : "Vuoi che ricordi che "}<b style={{ fontWeight: 500 }}>{f.text}</b>{f.state === "review" ? "?" : ""}{f.replaces?.length ? <span className="muted" style={{ display: "block", fontSize: 12.5 }}>{f.state === "saved" ? "Non più vero: " : "Al posto di: "}{f.replaces.map((r) => `«${r.text}»`).join(", ")}</span> : null}</span>
                           {f.state === "review" && (
                             <>
                               <button className="btn btn-ghost" onClick={() => patchAt(i, (r) => ({ facts: r.facts!.map((x, h) => (h === k ? { ...x, state: "discarded" } : x)) }))}>No</button>
-                              <button className="btn btn-primary" onClick={() => { addFact(f.text, "chat"); patchAt(i, (r) => ({ facts: r.facts!.map((x, h) => (h === k ? { ...x, state: "saved" } : x)) })); }}>Ricorda</button>
+                              <button className="btn btn-primary" onClick={() => { addFact(f.text, "chat", { sourceRef: chatRef.current, replaces: (f.replaces ?? []).map((r) => r.id) }); patchAt(i, (r) => ({ facts: r.facts!.map((x, h) => (h === k ? { ...x, state: "saved" } : x)) })); }}>Ricorda</button>
                             </>
                           )}
                         </div>

@@ -16,6 +16,8 @@ import { runAgent } from "./agent";
 import { budgetState, EUR_PER_USD, resetUnavailable } from "./llm";
 import { syncEmbeddings } from "./semantic";
 import { gardenMemory, type GardenStatus } from "./garden";
+import type { FactOrigin, FactStatus } from "./db/schema";
+import type { ProposedFact } from "./chat";
 import { generateInsights, morningBrief } from "./proactive";
 import { parseLook, type Look } from "./theme";
 import { FILE_ERROR, log, processAttachment, propose, reindexSoon } from "./pipeline";
@@ -405,7 +407,7 @@ function commandNames(ctx: CommandContext): Record<string, string> {
  * Nessuna scrittura, solo proposte da confermare. Audio in base64 (WAV): prima si trascrive.
  * Se è una domanda, `reply` contiene la risposta.
  */
-export async function interpret(input: { text?: string; audio?: string }): Promise<(CommandResult & { names: Record<string, string>; reply: string; facts: string[] }) | { error: string }> {
+export async function interpret(input: { text?: string; audio?: string }): Promise<(CommandResult & { names: Record<string, string>; reply: string; facts: ProposedFact[] }) | { error: string }> {
   await guard();
   if (!(await aiEnabled())) return { error: "Imposta la chiave OpenRouter nelle Impostazioni per usare i comandi." };
   if (!input.text?.trim() && !input.audio) return { error: "Niente da interpretare." };
@@ -487,30 +489,75 @@ export async function runMorningRound(): Promise<{ ok: true } | { error: string 
 
 // ——— Fatti su di te (memoria dell'IA) ———
 
-export type Fact = { id: string; text: string; source: string; createdAt: number };
+export type Fact = {
+  id: string; text: string; source: string; createdAt: number;
+  origin: FactOrigin; status: FactStatus; confidence: number | null; sourceRef: string | null;
+  validFrom: string | null; validUntil: string | null; lastConfirmedAt: number | null;
+  supersededBy: { id: string; text: string } | null;
+};
 
 export async function listFacts(): Promise<Fact[]> {
   await guard();
   const rows = await db.select().from(facts).orderBy(sql`${facts.createdAt} desc`);
-  return rows.map((f) => ({ id: f.id, text: f.text, source: f.source, createdAt: f.createdAt.getTime() }));
+  const text = new Map(rows.map((f) => [f.id, f.text]));
+  return rows.map((f) => ({
+    id: f.id, text: f.text, source: f.source, createdAt: f.createdAt.getTime(),
+    origin: f.origin, status: f.status, confidence: f.confidence, sourceRef: f.sourceRef,
+    validFrom: f.validFrom, validUntil: f.validUntil, lastConfirmedAt: f.lastConfirmedAt?.getTime() ?? null,
+    supersededBy: f.supersededBy && text.has(f.supersededBy) ? { id: f.supersededBy, text: text.get(f.supersededBy)! } : null,
+  }));
 }
 
-/** Aggiunge un fatto (confermato dall'utente: dalla chat, da un suggerimento o scritto a mano). */
-export async function addFact(text: string, source = "manuale") {
+/** Il giorno prima di `day` (YYYY-MM-DD): fine della validità di un fatto sostituito. */
+const dayBefore = (day: string) => isoDay(new Date(Date.parse(day + "T12:00:00Z") - 86400000));
+
+/**
+ * Aggiunge un fatto confermato dall'utente (dalla chat, da un comando, da un suggerimento o scritto a mano).
+ * `replaces`: fatti che il nuovo rende superati; diventano storia (obsolete, validi fino a ieri, sostituiti da questo).
+ */
+export async function addFact(text: string, source = "manuale", opts: { sourceRef?: string | null; replaces?: string[]; origin?: FactOrigin } = {}) {
   await guard();
   const t = text.replace(/\s+/g, " ").trim().slice(0, 300);
   if (!t) return;
-  const dup = (await db.select({ text: facts.text }).from(facts)).some((f) => f.text.toLowerCase() === t.toLowerCase());
-  if (!dup) await db.insert(facts).values({ id: newId("fa"), text: t, source, createdAt: new Date() });
-  await log("Fatto ricordato", null, t);
+  const today = isoDay();
+  const active = await db.select({ id: facts.id, text: facts.text }).from(facts).where(eq(facts.status, "confirmed"));
+  const same = active.find((f) => f.text.toLowerCase() === t.toLowerCase());
+  const now = new Date();
+  let id = same?.id;
+  if (same) await db.update(facts).set({ lastConfirmedAt: now }).where(eq(facts.id, same.id));
+  else {
+    id = newId("fa");
+    await db.insert(facts).values({ id, text: t, source, createdAt: now, origin: opts.origin ?? "declared", status: "confirmed", sourceRef: opts.sourceRef ?? null, validFrom: today, lastConfirmedAt: now });
+  }
+  const old = (opts.replaces ?? []).filter((r) => r !== id && active.some((f) => f.id === r));
+  if (old.length) await db.update(facts).set({ status: "obsolete", validUntil: dayBefore(today), supersededBy: id }).where(inArray(facts.id, old));
+  await log(old.length ? "Fatto aggiornato" : "Fatto ricordato", null, old.length ? `${t} (sostituisce: ${active.filter((f) => old.includes(f.id)).map((f) => f.text).join("; ")})` : t);
   refreshAll();
 }
 
+/** Corregge il testo di un fatto: vale anche come nuova conferma. Testo vuoto = dimentica. */
 export async function updateFact(id: string, text: string) {
   await guard();
   const t = text.replace(/\s+/g, " ").trim().slice(0, 300);
-  if (t) await db.update(facts).set({ text: t }).where(eq(facts.id, id));
+  if (t) await db.update(facts).set({ text: t, lastConfirmedAt: new Date() }).where(eq(facts.id, id));
   else await db.delete(facts).where(eq(facts.id, id));
+  refreshAll();
+}
+
+/** «Non più vero»: il fatto resta come storia (valido fino a ieri) e l'IA smette di usarlo come attuale. */
+export async function endFact(id: string) {
+  await guard();
+  const [f] = await db.select({ text: facts.text }).from(facts).where(eq(facts.id, id));
+  if (!f) return;
+  await db.update(facts).set({ status: "obsolete", validUntil: dayBefore(isoDay()) }).where(eq(facts.id, id));
+  await log("Fatto non più valido", null, f.text);
+  refreshAll();
+}
+
+/** Riporta un fatto superato tra quelli validi (es. chiuso per errore). */
+export async function restoreFact(id: string) {
+  await guard();
+  await db.update(facts).set({ status: "confirmed", validUntil: null, supersededBy: null, lastConfirmedAt: new Date() }).where(eq(facts.id, id));
   refreshAll();
 }
 

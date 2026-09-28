@@ -86,7 +86,9 @@ CREATE TABLE IF NOT EXISTS embeddings (
 );
 -- Fatti stabili sull'utente, confermati da lui: passati all'IA in ogni conversazione.
 CREATE TABLE IF NOT EXISTS facts (
-  id TEXT PRIMARY KEY, text TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manuale', created_at INTEGER NOT NULL
+  id TEXT PRIMARY KEY, text TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manuale', created_at INTEGER NOT NULL,
+  origin TEXT NOT NULL DEFAULT 'declared', status TEXT NOT NULL DEFAULT 'confirmed', confidence REAL, source_ref TEXT,
+  valid_from TEXT, valid_until TEXT, last_confirmed_at INTEGER, superseded_by TEXT
 );
 -- Suggerimenti dell'IA (Home): azioni proposte da confermare, oppure da ignorare.
 CREATE TABLE IF NOT EXISTS insights (
@@ -118,6 +120,16 @@ const ADD_COLUMNS = [
   "ALTER TABLE tasks ADD COLUMN remind INTEGER",
   "ALTER TABLE tasks ADD COLUMN remind_at INTEGER",
   "ALTER TABLE tasks ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0",
+  // Fatti con provenienza, stato e validità (28/9): quelli già presenti restano «detti dall'utente, confermati».
+  "ALTER TABLE facts ADD COLUMN origin TEXT NOT NULL DEFAULT 'declared'",
+  "ALTER TABLE facts ADD COLUMN status TEXT NOT NULL DEFAULT 'confirmed'",
+  "ALTER TABLE facts ADD COLUMN confidence REAL",
+  "ALTER TABLE facts ADD COLUMN source_ref TEXT",
+  "ALTER TABLE facts ADD COLUMN valid_from TEXT",
+  "ALTER TABLE facts ADD COLUMN valid_until TEXT",
+  "ALTER TABLE facts ADD COLUMN last_confirmed_at INTEGER",
+  "ALTER TABLE facts ADD COLUMN superseded_by TEXT",
+  "UPDATE facts SET last_confirmed_at = created_at WHERE last_confirmed_at IS NULL",
 ];
 
 /** Crea le tabelle al primo accesso e aggiunge le colonne mancanti. */

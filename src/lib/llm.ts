@@ -66,9 +66,16 @@ export async function budgetState(cfg?: AiConfig): Promise<BudgetState> {
 
 /** Profilo, tono e fatti confermati: aggiunti al prompt di sistema. */
 export async function userContext(): Promise<string> {
-  const [profile, fs] = await Promise.all([getProfile(), db.select({ text: facts.text }).from(facts).orderBy(desc(facts.createdAt)).limit(60)]);
-  const known = fs.length ? `\nFatti confermati dall'utente su di sé (usali quando sono utili, non ripeterli a vuoto):\n${fs.map((f) => "- " + f.text).join("\n")}` : "";
-  return personaPrompt(profile) + known;
+  const [profile, fs] = await Promise.all([
+    getProfile(),
+    db.select({ text: facts.text, status: facts.status, validUntil: facts.validUntil }).from(facts).orderBy(desc(facts.createdAt)).limit(120),
+  ]);
+  const current = fs.filter((f) => f.status === "confirmed").slice(0, 60);
+  const past = fs.filter((f) => f.status === "obsolete").slice(0, 15);
+  const fmt = (d: string) => d.split("-").reverse().join("/");
+  const known = current.length ? `\nFatti confermati dall'utente su di sé (usali quando sono utili, non ripeterli a vuoto):\n${current.map((f) => "- " + f.text).join("\n")}` : "";
+  const history = past.length ? `\nNon più veri (solo storia: non usarli come situazione attuale):\n${past.map((f) => `- ${f.text}${f.validUntil ? ` (fino al ${fmt(f.validUntil)})` : ""}`).join("\n")}` : "";
+  return personaPrompt(profile) + known + history;
 }
 
 /** Errori che indicano un modello non utilizzabile con queste impostazioni (e non un problema passeggero). */

@@ -49,7 +49,7 @@ export default async function SettingsPage() {
       content: (
         <>
           <SetCard title="Chi sei" icon="user"><ProfileSettings initial={profile} /></SetCard>
-          <SetCard title="Cosa l'IA sa di te" icon="ai" desc="Fatti stabili che l'IA usa in ogni conversazione. Li propone lei quando le racconti qualcosa di te e li salva solo se confermi. Clic su un fatto per correggerlo.">
+          <SetCard title="Cosa l'IA sa di te" icon="ai" desc="Fatti stabili che l'IA usa in ogni conversazione, con da dove vengono e da quando valgono. Li propone lei quando le racconti qualcosa di te e li salva solo se confermi; se qualcosa cambia (es. un nuovo lavoro) il fatto vecchio resta come storia. Clic su un fatto per correggerlo.">
             <FactsEditor />
           </SetCard>
         </>

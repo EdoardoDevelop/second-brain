@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { Icon } from "@/components/ui";
 import type { IconName } from "@/lib/icons";
 import { addFact, interpret, runCommand } from "@/lib/actions";
+import type { ProposedFact } from "@/lib/chat";
 import type { CommandAction, CommandKind } from "@/lib/ai";
 import { dueInfo } from "@/lib/format";
 import { useRecorder } from "./useRecorder";
@@ -35,7 +36,7 @@ export const KIND: Record<CommandKind, [string, IconName]> = {
 
 const PRIO = ["", "Alta", "Media", "Bassa"];
 
-type Fact = { text: string; state: "review" | "saved" | "discarded" };
+type Fact = ProposedFact & { state: "review" | "saved" | "discarded" };
 type Proposal = { transcript: string; actions: (CommandAction & { on: boolean })[]; names: Record<string, string>; reply: string; facts: Fact[] };
 type Phase = "idle" | "recording" | "thinking" | "review" | "saving" | "done";
 
@@ -56,7 +57,7 @@ export function CommandBar({ onClose, startRecording }: { onClose: () => void; s
     start(async () => {
       const res = await interpret(input);
       if ("error" in res) { setError(res.error); setPhase("idle"); return; }
-      setProposal({ ...res, actions: res.actions.map((a) => ({ ...a, on: true })), facts: res.facts.map((t): Fact => ({ text: t, state: "review" })) });
+      setProposal({ ...res, actions: res.actions.map((a) => ({ ...a, on: true })), facts: res.facts.map((f): Fact => ({ ...f, state: "review" })) });
       if (input.audio) setText(res.transcript);
       setPhase("review");
     });
@@ -83,7 +84,7 @@ export function CommandBar({ onClose, startRecording }: { onClose: () => void; s
   const decideFact = (k: number, keep: boolean) => {
     const f = proposal?.facts[k];
     if (!f) return;
-    if (keep) addFact(f.text, "comando");
+    if (keep) addFact(f.text, "comando", { replaces: f.replaces.map((r) => r.id) });
     setProposal((p) => p && { ...p, facts: p.facts.map((x, h) => (h === k ? { ...x, state: keep ? "saved" : "discarded" } : x)) });
   };
 
@@ -151,7 +152,7 @@ export function CommandBar({ onClose, startRecording }: { onClose: () => void; s
                   {proposal.facts.map((f, k) => (
                     <div key={k} className="fact-card" data-state={f.state}>
                       <Icon name="ai" size={14} />
-                      <span style={{ flex: 1 }}>{f.state === "saved" ? "Ricorderò: " : f.state === "discarded" ? "Non lo ricorderò: " : "Vuoi che ricordi che "}<b style={{ fontWeight: 500 }}>{f.text}</b>{f.state === "review" ? "?" : ""}</span>
+                      <span style={{ flex: 1 }}>{f.state === "saved" ? "Ricorderò: " : f.state === "discarded" ? "Non lo ricorderò: " : "Vuoi che ricordi che "}<b style={{ fontWeight: 500 }}>{f.text}</b>{f.state === "review" ? "?" : ""}{f.replaces.length ? <span className="muted" style={{ display: "block", fontSize: 12.5 }}>{f.state === "saved" ? "Non più vero: " : "Al posto di: "}{f.replaces.map((r) => `«${r.text}»`).join(", ")}</span> : null}</span>
                       {f.state === "review" && (
                         <>
                           <button className="btn btn-ghost" onClick={() => decideFact(k, false)}>No</button>

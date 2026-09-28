@@ -32,7 +32,14 @@ const Backup = z.object({
   // Assente nei backup precedenti agli obiettivi.
   goals: z.array(z.object({ id: z.string(), projectId: z.string(), title: z.string(), done: z.boolean(), ord: z.number(), createdAt: date })).default([]),
   chats: z.array(z.object({ id: z.string(), title: z.string(), scope: z.string(), msgs: z.string(), createdAt: date, updatedAt: date })).default([]),
-  facts: z.array(z.object({ id: z.string(), text: z.string(), source: z.string(), createdAt: date })).default([]),
+  facts: z.array(z.object({
+    id: z.string(), text: z.string(), source: z.string(), createdAt: date,
+    origin: z.enum(["declared", "inferred", "observed"]).default("declared"),
+    status: z.enum(["confirmed", "pending", "obsolete", "conflict"]).default("confirmed"),
+    confidence: z.number().nullable().default(null), sourceRef: z.string().nullable().default(null),
+    validFrom: z.string().nullable().default(null), validUntil: z.string().nullable().default(null),
+    lastConfirmedAt: date.nullable().default(null), supersededBy: z.string().nullable().default(null),
+  })).default([]),
   aiLog: z.array(z.object({ at: date, action: z.string(), itemId: z.string().nullable(), outcome: z.string() })).default([]),
   // Solo i riferimenti: i file restano sul server. Si ricollegano quelli ancora presenti.
   attachments: z.array(z.object({ id: z.string(), itemId: z.string(), name: z.string(), mime: z.string(), size: z.number(), createdAt: date })).default([]),

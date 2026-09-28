@@ -20,7 +20,9 @@ export type ChatAnswer = {
 };
 
 /** Fatto sull'utente proposto dall'IA, da confermare. */
-export type FactCard = { text: string; state: "review" | "saved" | "discarded" };
+/** Fatto proposto dall'IA: se contraddice fatti già noti, `replaces` li indica (confermando diventano storia). */
+export type ProposedFact = { text: string; replaces: { id: string; text: string }[] };
+export type FactCard = ProposedFact & { state: "review" | "saved" | "discarded" };
 /** Formato delle risposte salvate prima dello streaming (27/9). */
 export type LegacyAnswer = { paragraphs: string[]; list: string[]; after: string; note: string; sources: Source[]; read: number };
 
@@ -55,7 +57,7 @@ export type AskEvent =
   | { type: "scope"; scope: string }
   | { type: "tool"; label: string }
   | { type: "reset" }
-  | { type: "facts"; facts: string[] }
+  | { type: "facts"; facts: ProposedFact[] }
   | { type: "error"; error: string }
   | { type: "done" };
 

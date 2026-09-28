@@ -215,9 +215,26 @@ export const embeddings = sqliteTable("embeddings", {
 export const facts = sqliteTable("facts", {
   id: text("id").primaryKey(),
   text: text("text").notNull(),
+  /** Da dove è arrivato: manuale, chat, comando, suggerimento. */
   source: text("source").notNull().default("manuale"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  /** declared = detto dall'utente · inferred = dedotto dall'IA · observed = letto in un elemento. */
+  origin: text("origin").$type<FactOrigin>().notNull().default("declared"),
+  /** confirmed = valido e usato dall'IA · pending = da confermare · obsolete = non più vero (storia) · conflict = in contrasto. */
+  status: text("status").$type<FactStatus>().notNull().default("confirmed"),
+  /** Solo per i fatti dedotti: quanto è sicura l'IA (0-1). */
+  confidence: real("confidence"),
+  /** Id della conversazione o dell'elemento da cui nasce. */
+  sourceRef: text("source_ref"),
+  /** Periodo di validità (YYYY-MM-DD), null = non noto / ancora valido. */
+  validFrom: text("valid_from"),
+  validUntil: text("valid_until"),
+  lastConfirmedAt: integer("last_confirmed_at", { mode: "timestamp_ms" }),
+  /** Fatto che lo ha sostituito (es. il nuovo lavoro). */
+  supersededBy: text("superseded_by"),
 });
+export type FactOrigin = "declared" | "inferred" | "observed";
+export type FactStatus = "confirmed" | "pending" | "obsolete" | "conflict";
 
 /** Suggerimenti dell'IA mostrati nella Home. `actions` sono azioni di comando da confermare. */
 export const insights = sqliteTable("insights", {
