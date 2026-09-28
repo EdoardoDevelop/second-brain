@@ -39,6 +39,9 @@ export type AiConfig = {
   budgetEur: number;
 };
 
+/** Le chiavi OpenRouter iniziano con "sk-or-" e non contengono spazi. */
+export const isOpenRouterKey = (k: string | null | undefined) => !!k && /^sk-or-\S+$/.test(k.trim());
+
 /** Configurazione IA: i valori salvati dalle Impostazioni hanno la precedenza sul .env. */
 export async function getAiConfig(): Promise<AiConfig> {
   await ready();
@@ -52,9 +55,12 @@ export async function getAiConfig(): Promise<AiConfig> {
   const dc = s.ai_data_collection ?? process.env.AI_DATA_COLLECTION;
   const privacy: AiPrivacy = s.ai_privacy === "zdr" || s.ai_privacy === "allow" || s.ai_privacy === "deny" ? s.ai_privacy : dc === "allow" ? "allow" : "deny";
   const budget = Number(s.ai_budget ?? 5);
+  // Una chiave salvata che non ha la forma di una chiave OpenRouter (es. la password dell'app incollata dal
+  // browser nel campo) si ignora: si torna a quella del .env invece di fallire con "Missing Authentication header".
+  const appKey = isOpenRouterKey(s.openrouter_key) ? s.openrouter_key!.trim() : null;
   return {
-    apiKey: s.openrouter_key || envKey,
-    keySource: s.openrouter_key ? "app" : envKey ? "env" : null,
+    apiKey: appKey || envKey,
+    keySource: appKey ? "app" : envKey ? "env" : null,
     model: fast,
     models: {
       fast,

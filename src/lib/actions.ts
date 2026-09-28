@@ -9,7 +9,7 @@ import { aiEnabled, classify, interpretCommand, transcribe, manualProposal, runI
 import { endSession, requireAuth } from "./auth";
 import { commandContext, memoryContext } from "./queries";
 import { isoDay, reminderFields } from "./format";
-import { getAiConfig, getProfile, getSetting, setSetting, type AiModels, type AiPrivacy } from "./settings";
+import { getAiConfig, getProfile, getSetting, isOpenRouterKey, setSetting, type AiModels, type AiPrivacy } from "./settings";
 import { writeBrief } from "./ai";
 import { briefData } from "./queries";
 import { runAgent } from "./agent";
@@ -599,6 +599,7 @@ export async function saveNotifyPrefs(p: NotifyPrefs) {
 /** apiKey: undefined = invariata, "" = rimuovi (torna al .env), altrimenti nuova chiave. */
 export async function saveAiSettings(input: { apiKey?: string; models: AiModels; privacy: AiPrivacy; budgetEur: number }) {
   await guard();
+  if (input.apiKey?.trim() && !isOpenRouterKey(input.apiKey)) return { error: "Questa non è una chiave OpenRouter: deve iniziare con «sk-or-»." };
   if (input.apiKey !== undefined) await setSetting("openrouter_key", input.apiKey.trim() || null);
   const m = Object.fromEntries(Object.entries(input.models).map(([k, v]) => [k, String(v ?? "").trim()])) as AiModels;
   await setSetting("ai_model", m.fast || null);
@@ -611,6 +612,7 @@ export async function saveAiSettings(input: { apiKey?: string; models: AiModels;
   resetUnavailable();
   await log("Impostazioni IA aggiornate", null, `Ragionamento ${m.smart} · veloce ${m.fast} · privacy ${privacy} · tetto €${input.budgetEur}`);
   refreshAll();
+  return { ok: true as const };
 }
 
 export type AiOverview = {
