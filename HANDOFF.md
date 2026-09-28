@@ -55,6 +55,11 @@ Richiesta dell'utente: IA più intelligente e interazione migliore, **budget cir
 - Stili nuovi in fondo a globals.css: `.cite`, `.followups`, `.answer-tools`, `.fact-card`, `.expert-badge`, `.steps-done`, `.cmd-reply`, `.ins-*`, `.brief`, `.tier-*`, `.spend-*`, `.compare-*`.
 - Trappola: modificando file con Python da Bash, `\n` dentro le stringhe è diventato più volte un vero a capo (stringhe JS spezzate). Meglio scrivere lo script con il Write tool in un file .py con stringhe raw (prefisso r) e poi eseguirlo.
 
+## Impostazioni riorganizzate e README (28/9)
+
+- **Impostazioni** (`impostazioni/page.tsx` + `SettingsShell.tsx`): sette sezioni (Profilo, Aspetto, Notifiche, Intelligenza artificiale, Integrazioni, Registro IA, Dati e backup), una alla volta. Menu laterale fisso sul computer, schede scorrevoli in alto sotto gli 860 px (la scheda attiva si porta in vista). La sezione è nell'indirizzo (`/impostazioni#ia`, `#aspetto`…). Tutte restano montate (`hidden`, con `.set-body[hidden]{display:none}` perché `display:flex` lo scavalcava). Ogni sezione è fatta di riquadri `SetCard` (titolo con icona, descrizione, `tone="danger"` per «Zona pericolosa»). IA divisa in Account OpenRouter, Spesa del mese, Privacy, Modelli per compito, Ricerca per significato, Confronta modelli; il salvataggio è una **barra in basso** (`.save-bar`, sticky) che compare solo con modifiche non salvate, con Annulla. «Cosa l'IA sa di te» è un riquadro a sé (`FactsEditor` esportato da ProfileSettings). Nuova icona `bell`. Stili `.set-*` in fondo a globals.css.
+- **README.md riscritto** (era fermo alla prima fase: parlava di Vercel/Turso e di sezioni «in arrivo»): funzioni attuali, come funziona l'IA (modelli per compito, privacy, spesa, ricerca), stack, avvio in locale con le trappole di Google Drive, variabili d'ambiente complete, produzione sul VPS, struttura. `.env.example` allineato.
+
 ## Fatto
 
 - **Shell:** sidebar comprimibile (su mobile diventa un cassetto), modalità chiaro/scuro/automatico salvata in un cookie (`sb_theme`, per dispositivo), ⌘K per la ricerca, logout.

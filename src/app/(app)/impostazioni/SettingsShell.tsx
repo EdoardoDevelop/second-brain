@@ -23,6 +23,11 @@ export function SettingsShell({ sections }: { sections: SettingsSection[] }) {
     return () => removeEventListener("hashchange", fromHash);
   }, [sections]);
 
+  // Sul telefono le schede scorrono: quella attiva deve restare visibile.
+  useEffect(() => {
+    document.querySelector<HTMLElement>(".set-nav-btn[aria-current='page']")?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [active]);
+
   const open = (id: string) => {
     setActive(id);
     history.replaceState(null, "", `#${id}`);

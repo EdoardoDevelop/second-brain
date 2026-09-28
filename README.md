@@ -1,15 +1,52 @@
 # Second Brain
 
-La tua memoria personale. Catturi qualsiasi cosa, l'IA propone come archiviarla e tu confermi: nulla entra in memoria senza il tuo ok.
+La tua memoria personale. Catturi qualsiasi cosa (testo, link, foto, PDF, audio, condivisioni dal telefono), l'IA propone come archiviarla e tu confermi: **nulla entra in memoria senza il tuo ok**, e ogni azione dell'IA finisce nel registro.
 
-Web app per un solo utente, usabile da più dispositivi. Implementa il design `Second Brain.dc.html` con il design system Industry.
+Web app per un solo utente, usata da computer e telefono (installabile come app). In produzione gira su un VPS personale: <https://localvps.ddns.net>.
+
+Lo stato dettagliato del lavoro, le decisioni e le procedure operative sono in [HANDOFF.md](HANDOFF.md).
+
+## Cosa fa
+
+| Area | Cosa c'è |
+|---|---|
+| **Home** | Riepilogo del mattino scritto dall'IA, suggerimenti dell'IA con azioni da confermare, meteo, notizie per te, catture, attività, agenda, progetti, obiettivi, persone, preferiti, conversazioni. Riquadri riordinabili e ridimensionabili |
+| **Inbox** | Cattura di testo, link, file (foto, PDF, audio) e registrazioni; condivisione dal telefono (Android); proposta dell'IA modificabile (tipo, titolo, sintesi, persone, progetto, tag, collegamenti e conflitti, attività) da confermare |
+| **Conoscenza** | Ricerca, viste, filtri, preferiti; dettaglio con contenuto modificabile, allegati (popup immagini, lettore PDF integrato), azioni IA, collegamenti, esporta in Markdown, «Chiedi all'IA su questo» |
+| **Assistente** | Domande e comandi, scritti o a voce. L'IA lavora a passi (cerca, apre, confronta), risponde con citazioni cliccabili, suggerisce domande successive, propone azioni e fatti da ricordare che confermi tu. «Pensa meglio» usa un modello più potente; «Salva in memoria» manda la risposta in Inbox |
+| **Barra comandi** | ⌘J (o il pulsante IA/microfono): comandi e domande rapide con lo stesso motore dell'Assistente |
+| **Attività** | Gruppi per scadenza, orari e promemoria con notifica («Fatto», «+1 ora»), modifica ed eliminazione |
+| **Progetti e Persone** | Obiettivi, attività, documenti, persone coinvolte, «Cosa dovresti sapere» e «Relazione in breve» generate dall'IA |
+| **Timeline e Connessioni** | Cronologia per giorno; grafo 2D/3D di elementi, progetti, persone e concetti |
+| **Impostazioni** | Profilo e fatti che l'IA sa di te, aspetto (temi, colori, carattere, sfondi), notifiche push, IA (modelli per compito, privacy, spesa del mese con tetto, confronto modelli), integrazioni, registro IA, backup |
+| **Integrazioni** | Server MCP e skill per Claude, API REST con chiavi, webhook firmati |
+
+## Come funziona l'IA
+
+Tutte le chiamate passano da **OpenRouter** (`src/lib/llm.ts`), con un modello diverso per compito:
+
+| Compito | Uso | Predefinito |
+|---|---|---|
+| Veloce | Classificazione delle catture, notizie | `google/gemini-3.5-flash-lite` |
+| File e audio | Lettura di foto, PDF, registrazioni | come il veloce |
+| Ragionamento | Assistente, comandi, sintesi, riepilogo, suggerimenti | `deepseek/deepseek-v4-pro` |
+| Pensa meglio | Su richiesta, per la singola domanda | `anthropic/claude-sonnet-5` |
+| Significato | Ricerca per significato (embedding) | `google/gemini-embedding-2` |
+
+- **Privacy:** si possono escludere i fornitori che conservano o usano i dati, fino alla conservazione zero (ZDR). Se un modello non è disponibile con la privacy scelta, l'app ripiega sul modello veloce e lo segnala; la privacy non si allenta mai.
+- **Spesa:** ogni chiamata registra token e costo; nelle Impostazioni si vede la spesa del mese e si fissa un tetto (predefinito 5 €). Oltre il tetto il ragionamento passa al modello veloce.
+- **Ricerca:** parole (SQLite FTS5) più significato (embedding), unite per pertinenza. L'indice si aggiorna da solo ogni 10 minuti.
+- Senza chiave OpenRouter l'app funziona lo stesso: classifichi a mano e l'Assistente è spento.
 
 ## Stack
 
-- **Next.js 16** (App Router, server actions) + React 19 + TypeScript
-- **libSQL/SQLite** con Drizzle ORM: in locale è un file, in produzione un database [Turso](https://turso.tech). Il codice è lo stesso.
-- **OpenRouter** (API compatibile OpenAI, chiamata con `fetch`) per classificare le catture e per le azioni IA; il modello si sceglie da `.env`
-- Accesso protetto da password, con cookie firmato valido 90 giorni
+- **Next.js 16** (App Router, server actions), React 19, TypeScript 5
+- **libSQL/SQLite** con Drizzle ORM; le tabelle (e le colonne nuove) si creano da sole all'avvio, senza migrazioni
+- **OpenRouter** via `fetch`, output strutturati validati con Zod 4
+- **Web Push** implementato senza librerie (VAPID + aes128gcm con `node:crypto`)
+- **pdf.js** copiato in `public/pdfjs/` per il lettore PDF
+- Open-Meteo (meteo) e Google News RSS (notizie), gratuiti e senza chiave
+- Accesso con password unica e cookie firmato valido 90 giorni
 
 ## Avvio in locale
 
@@ -19,9 +56,9 @@ cp .env.example .env.local   # poi compila i valori
 npm run dev
 ```
 
-Apri http://localhost:3000 ed entra con `APP_PASSWORD`. Con la memoria vuota, la Home offre **Carica dati di esempio**, cioè i dati del prototipo.
+Apri <http://localhost:3000> ed entra con `APP_PASSWORD`. Con la memoria vuota, la Home offre **Carica dati di esempio**.
 
-Le tabelle si creano da sole al primo avvio.
+> **Progetto su Google Drive:** `npm install` si rompe (TAR_ENTRY_ERROR), Turbopack non riesce a creare i collegamenti e `npx` non funziona per lo spazio nel percorso. Per la build usa `node node_modules/next/dist/bin/next build --webpack`, per i controlli `node node_modules/typescript/bin/tsc --noEmit -p .`.
 
 ### Variabili d'ambiente
 
@@ -29,37 +66,37 @@ Le tabelle si creano da sole al primo avvio.
 |---|---|
 | `APP_PASSWORD` | Password di accesso |
 | `SESSION_SECRET` | Chiave per firmare il cookie (almeno 16 caratteri casuali) |
-| `DATABASE_URL` | `file:data/second-brain.db` in locale, `libsql://…turso.io` in produzione |
-| `DATABASE_AUTH_TOKEN` | Token di Turso (solo in produzione) |
-| `OPENROUTER_API_KEY` | Attiva la classificazione IA. Senza chiave l'app funziona e classifichi a mano |
-| `AI_MODEL` | Opzionale, id OpenRouter del modello, predefinito `google/gemini-3.5-flash-lite`. Deve supportare gli output strutturati |
-| `AI_DATA_COLLECTION` | Opzionale. Predefinito: esclude i fornitori che conservano o addestrano sui dati. `allow` li ammette (serve per molti modelli `:free`) |
+| `DATABASE_URL` | Predefinito `file:data/second-brain.db` |
+| `DATABASE_AUTH_TOKEN` | Solo se il database è remoto (Turso) |
+| `OPENROUTER_API_KEY` | Chiave OpenRouter. Si può anche impostare dall'app (Impostazioni → IA), che ha la precedenza |
+| `AI_MODEL` | Facoltativo: modello veloce predefinito. Gli altri modelli si scelgono dall'app |
+| `AI_DATA_COLLECTION` | Facoltativo: `allow` ammette i fornitori che conservano i dati. La privacy si sceglie comunque dall'app |
+| `FILES_DIR` | Facoltativo: cartella degli allegati, predefinito `data/files` |
+| `PUSH_CONTACT` | Facoltativo: contatto (mailto: o URL) inviato ai servizi push |
+| `OPENROUTER_URL` | Solo per i test: sostituisce l'indirizzo di OpenRouter con un server finto |
 
-## Online, da tutti i dispositivi
+## Produzione
 
-1. Crea il database: `turso db create second-brain`, poi `turso db show second-brain --url` e `turso db tokens create second-brain`.
-2. Importa il repository su [Vercel](https://vercel.com) e imposta le variabili qui sopra.
-3. Apri l'URL da computer e telefono. Il layout si adatta al mobile (la barra laterale diventa un menu).
+L'app gira su un VPS Ubuntu con aaPanel: servizio systemd `second-brain` su `127.0.0.1:3100`, dietro nginx con HTTPS (Let's Encrypt). Database e allegati stanno in `data/` sul server; la configurazione in `.env.local`, che il pacchetto di deploy non sovrascrive mai.
 
-## Cosa c'è in questa fase
-
-| Schermata | Stato |
-|---|---|
-| Home | Sintesi del giorno, catture, attività, progetti, conoscenza recente, persone |
-| Inbox | Cattura di testo e link, proposta IA modificabile (tipo, titolo, sintesi, persone, progetto, tag, collegamenti, conflitti, attività), Conferma / Salva senza classificazione / Scarta, Riprova |
-| Conoscenza | Ricerca, viste, filtri per tipo, progetto e tag, preferiti |
-| Dettaglio | Sintesi, contenuto modificabile, conflitti, azioni IA (Riassumi, Spiega, Genera attività) con conferma, collegati, provenienza, registro IA, esporta in Markdown, archivia, elimina |
-| Attività | Gruppi per scadenza, filtri, aggiunta rapida, scadenza modificabile, origine dell'attività |
-| ⌘K, tema chiaro/scuro | Ricerca rapida e tema salvato |
-| Progetti, Persone, Timeline, Connessioni, Assistente, Impostazioni, Moduli | Prossime fasi (segnaposto "In arrivo") |
+Il deploy carica un archivio del progetto (senza `node_modules`, `.next`, `data`, `.env.local`), poi sul server esegue `npm ci && npm run build && systemctl restart second-brain`. La procedura completa, con l'API di aaPanel, è in [HANDOFF.md](HANDOFF.md#produzione-vps-aapanel-dellutente).
 
 ## Struttura
 
 ```
-src/lib/db/schema.ts   modello dati: items, projects, people, links, tasks, ai_log
-src/lib/ai.ts          chiamate a Claude (output strutturato con Zod)
+src/lib/db/            schema (Drizzle) e creazione delle tabelle
+src/lib/llm.ts         chiamate a OpenRouter: modello per compito, privacy, costi, tetto, ripiego
+src/lib/ai.ts          prompt e schemi (classificazione, lettura file, comandi, sintesi, notizie)
+src/lib/agent.ts       Assistente a passi con strumenti
+src/lib/semantic.ts    ricerca per significato e ricerca ibrida
+src/lib/proactive.ts   riepilogo del mattino e suggerimenti
 src/lib/actions.ts     server actions: ogni modifica passa da qui
 src/lib/queries.ts     letture
+src/lib/api-core.ts    strumenti condivisi da API REST, MCP e Assistente
+src/lib/push.ts        notifiche push, promemoria, giro del mattino
+src/instrumentation.ts pianificatore (ogni minuto): promemoria, mattino, indice
 src/app/(app)/…        pagine protette
-src/app/industry.css   design system Industry (copiato da _ds)
+src/app/api/…          ask (Assistente in streaming), capture, share, files, export/import, mcp, v1 (REST)
+src/components/…       componenti condivisi (meteo, notizie, suggerimenti, lettore PDF, popup immagini…)
+src/app/globals.css    stili dell'app; industry.css è il design system
 ```
