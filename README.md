@@ -4,8 +4,6 @@ La tua memoria personale. Catturi qualsiasi cosa (testo, link, foto, PDF, audio,
 
 Web app per un solo utente, usata da computer e telefono (installabile come app). In produzione gira su un VPS personale: <https://localvps.ddns.net>.
 
-Lo stato dettagliato del lavoro, le decisioni e le procedure operative sono in [HANDOFF.md](HANDOFF.md).
-
 ## Cosa fa
 
 | Area | Cosa c'è |
@@ -79,7 +77,7 @@ Apri <http://localhost:3000> ed entra con `APP_PASSWORD`. Con la memoria vuota, 
 
 L'app gira su un VPS Ubuntu con aaPanel: servizio systemd `second-brain` su `127.0.0.1:3100`, dietro nginx con HTTPS (Let's Encrypt). Database e allegati stanno in `data/` sul server; la configurazione in `.env.local`, che il pacchetto di deploy non sovrascrive mai.
 
-Il deploy carica un archivio del progetto (senza `node_modules`, `.next`, `data`, `.env.local`), poi sul server esegue `npm ci && npm run build && systemctl restart second-brain`. La procedura completa, con l'API di aaPanel, è in [HANDOFF.md](HANDOFF.md#produzione-vps-aapanel-dellutente).
+Il deploy carica un archivio del progetto (senza `node_modules`, `.next`, `data`, `.env.local`), poi sul server esegue `npm ci && npm run build && systemctl restart second-brain`.
 
 ## Struttura
 
