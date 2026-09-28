@@ -99,6 +99,7 @@ const TASK_LABEL: Record<string, string> = {
 
 export function AiSettings(props: { keyMasked: string | null; keySource: "app" | "env" | null; models: Models; defaults: Models; privacy: Privacy; budgetEur: number }) {
   const [newKey, setNewKey] = useState("");
+  const [keyFocus, setKeyFocus] = useState(false);
   const [models, setModels] = useState<Models>(props.models);
   const [privacy, setPrivacy] = useState<Privacy>(props.privacy);
   const [budget, setBudget] = useState(String(props.budgetEur).replace(".", ","));
@@ -146,7 +147,9 @@ export function AiSettings(props: { keyMasked: string | null; keySource: "app" |
           </div>
         </Row>
         {props.keyMasked && <CreditBox status={status} loading={pending || (!status && !!props.keyMasked)} onRefresh={() => start(async () => setStatus(await testAiKey()))} />}
-        <input className="input" type="password" autoComplete="off" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder={props.keyMasked ? "Sostituisci con una nuova chiave (sk-or-…)" : "Incolla la chiave OpenRouter (sk-or-…)"} />
+        {/* Il browser ignora autoComplete="off" sui campi password e ci incolla la password dell'app, che risulterebbe
+            una modifica non salvata: "new-password" e sola lettura fino al primo tocco impediscono l'autocompilazione. */}
+        <input className="input" type="password" name="openrouter-key" autoComplete="new-password" data-1p-ignore data-lpignore="true" readOnly={!keyFocus} onFocus={() => setKeyFocus(true)} spellCheck={false} value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder={props.keyMasked ? "Sostituisci con una nuova chiave (sk-or-…)" : "Incolla la chiave OpenRouter (sk-or-…)"} />
       </SetCard>
 
       <SetCard title="Spesa del mese" icon="wallet" desc="Quanto costa l'IA questo mese e il tetto che non vuoi superare.">

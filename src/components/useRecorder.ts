@@ -48,7 +48,8 @@ export function useRecorder(onAudio: (wav: string) => void, onError: (msg: strin
     if (rec.current) return;
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Voce pulita: niente eco, rumore di fondo ridotto e volume regolato, un solo canale.
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
     } catch {
       cb.current.onError("Microfono non disponibile: controlla i permessi del browser.");
       return;

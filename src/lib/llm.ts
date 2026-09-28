@@ -35,6 +35,8 @@ export type LlmRequest = {
   /** Output JSON con schema (json_schema rigoroso). */
   schema?: { name: string; schema: unknown };
   maxTokens?: number;
+  /** Temperatura di campionamento (predefinita del modello se assente). */
+  temperature?: number;
   timeoutMs?: number;
   /** Testo in arrivo, pezzo per pezzo (attiva lo streaming). */
   onDelta?: (d: string) => void;
@@ -87,6 +89,7 @@ async function send(req: LlmRequest, cfg: AiConfig, model: string, tier: AiTier)
     body: JSON.stringify({
       model,
       max_tokens: req.maxTokens ?? 4000,
+      ...(req.temperature != null ? { temperature: req.temperature } : {}),
       messages: system,
       ...(req.tools?.length ? { tools: req.tools, tool_choice: "auto" } : {}),
       ...(req.schema ? { response_format: { type: "json_schema", json_schema: { name: req.schema.name, strict: true, schema: req.schema.schema } } } : {}),
