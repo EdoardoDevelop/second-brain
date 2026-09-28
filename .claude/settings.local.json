@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tar --force-local --exclude=node_modules --exclude=.next --exclude=data --exclude=.env.local -czf \"C:/Users/Edoardo/AppData/Local/Temp/claude/g--Il-mio-Drive-Modulo-domande-progetto---code-Modulo-domande-progetto-second-brain/993aa6f6-a9ca-4e6c-96c9-9b7088708a72/scratchpad/sb.tgz\" .)"
+    ]
+  }
+}

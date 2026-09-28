@@ -1,0 +1,522 @@
+{
+ "KN": [
+  {
+   "id": "k1",
+   "title": "Decisione pricing Alpha",
+   "type": "Decisione",
+   "icon": "decision",
+   "date": "12 set 2026",
+   "short": "12 set",
+   "origin": "Note riunione",
+   "source": "Riunione settimanale con Marco",
+   "tags": [
+    "pricing",
+    "alpha",
+    "lancio"
+   ],
+   "links": 6,
+   "project": "alpha",
+   "people": [
+    "marco",
+    "luca"
+   ],
+   "created": "12 set 2026, 11:42",
+   "updated": "14 set 2026, 09:10",
+   "summary": "Alpha verrà lanciato con un piano unico a 29 € per utente al mese. Il freemium è rinviato a dopo la beta privata.",
+   "explain": "Il piano unico rende semplice il messaggio della beta e produce dati di conversione leggibili nei primi tre mesi. Il prezzo è sopra la media dei concorrenti (24 €), che quasi sempre offrono anche un piano gratuito.",
+   "body": [
+    "Durante la riunione settimanale del 12 settembre, Marco e io abbiamo confrontato tre modelli di prezzo: piano unico, fasce per numero di utenti e freemium con upgrade.",
+    "Abbiamo scelto il piano unico a 29 € per utente al mese. Motivazioni: messaggio semplice per la beta, nessun costo di supporto per utenti gratuiti, dati di conversione più leggibili nei primi tre mesi.",
+    "Il freemium resta un'opzione da rivalutare dopo la beta privata, con i dati di attivazione dei primi 20 clienti."
+   ],
+   "actions": [
+    "Aggiornare la pagina prezzi del sito",
+    "Comunicare il piano unico ai 20 beta tester",
+    "Fissare una revisione del freemium a fine beta"
+   ]
+  },
+  {
+   "id": "k2",
+   "title": "Alpha strategy.pdf",
+   "type": "Documento",
+   "icon": "file",
+   "date": "3 set 2026",
+   "short": "3 set",
+   "origin": "Caricamento",
+   "source": "File locale · 14 pagine",
+   "tags": [
+    "strategia",
+    "alpha"
+   ],
+   "links": 5,
+   "project": "alpha",
+   "people": [
+    "marco"
+   ],
+   "created": "3 set 2026, 16:20",
+   "updated": "3 set 2026, 16:21",
+   "summary": "Strategia di lancio in tre fasi: beta privata con 20 aziende, lancio pubblico a gennaio, espansione verso le catene retail.",
+   "body": [
+    "Fase 1, ottobre–dicembre: beta privata con 20 aziende selezionate dalla lista d'attesa, supporto diretto del team.",
+    "Fase 2, gennaio: lancio pubblico con piano unico e onboarding self-service.",
+    "Fase 3, dal secondo trimestre: offerta dedicata alle catene retail con più punti vendita."
+   ]
+  },
+  {
+   "id": "k3",
+   "title": "Riunione settimanale con Marco",
+   "type": "Riunione",
+   "icon": "users",
+   "date": "12 set 2026",
+   "short": "12 set",
+   "origin": "Calendario",
+   "source": "Google Calendar · 45 min",
+   "tags": [
+    "riunione",
+    "alpha"
+   ],
+   "links": 7,
+   "project": "alpha",
+   "people": [
+    "marco",
+    "luca"
+   ],
+   "created": "12 set 2026, 10:00",
+   "updated": "12 set 2026, 11:45",
+   "summary": "Decisi il pricing e il perimetro della beta privata. Tre attività assegnate.",
+   "body": [
+    "Presenti: Marco, Luca, io. Ordine del giorno: modello di prezzo, perimetro della beta, stato dell'onboarding.",
+    "Decisione: piano unico a 29 € per utente al mese. Beta limitata a 20 aziende.",
+    "Attività: aggiornare il listino (io), rivedere il flusso di onboarding (Luca), preparare la demo per la beta (Marco)."
+   ]
+  },
+  {
+   "id": "k4",
+   "title": "Benchmark prezzi concorrenti",
+   "type": "Pagina web",
+   "icon": "globe",
+   "date": "9 set 2026",
+   "short": "9 set",
+   "origin": "Browser",
+   "source": "4 pagine salvate",
+   "tags": [
+    "pricing",
+    "ricerca"
+   ],
+   "links": 3,
+   "project": "alpha",
+   "people": [],
+   "created": "9 set 2026, 21:03",
+   "updated": "9 set 2026, 21:03",
+   "summary": "Quattro concorrenti su cinque offrono un piano gratuito limitato a 5 utenti. Prezzo medio del piano base: 24 €."
+  },
+  {
+   "id": "k5",
+   "title": "Idea: freemium per team piccoli",
+   "type": "Idea",
+   "icon": "idea",
+   "date": "18 set 2026",
+   "short": "18 set",
+   "origin": "Memo vocale",
+   "source": "iPhone · 0:52",
+   "tags": [
+    "pricing",
+    "idea"
+   ],
+   "links": 2,
+   "project": "alpha",
+   "people": [
+    "luca"
+   ],
+   "created": "18 set 2026, 08:14",
+   "updated": "18 set 2026, 08:15",
+   "conflict": true,
+   "summary": "Un piano gratuito per team sotto le 5 persone. È in conflitto con la decisione sul pricing del 12 settembre."
+  },
+  {
+   "id": "k6",
+   "title": "Term sheet — bozza Vento Capital",
+   "type": "Documento",
+   "icon": "file",
+   "date": "15 set 2026",
+   "short": "15 set",
+   "origin": "Email",
+   "source": "Allegato da Sara Bianchi",
+   "tags": [
+    "fundraising",
+    "legale"
+   ],
+   "links": 4,
+   "project": "beta",
+   "people": [
+    "sara",
+    "elena"
+   ],
+   "created": "15 set 2026, 17:30",
+   "updated": "16 set 2026, 10:02",
+   "summary": "Pre-money 4 M€, ticket 800 k€, vesting di 4 anni con cliff di 12 mesi. In attesa di revisione legale."
+  },
+  {
+   "id": "k7",
+   "title": "Principi di design Alpha",
+   "type": "Nota",
+   "icon": "note",
+   "date": "28 ago 2026",
+   "short": "28 ago",
+   "origin": "Editor",
+   "source": "Scritta da te",
+   "tags": [
+    "design",
+    "alpha"
+   ],
+   "links": 3,
+   "project": "alpha",
+   "people": [
+    "luca"
+   ],
+   "created": "28 ago 2026, 15:40",
+   "updated": "2 set 2026, 12:11",
+   "summary": "Cinque principi: turni leggibili in 3 secondi, nessuna configurazione obbligatoria, mobile prima del desktop."
+  },
+  {
+   "id": "k8",
+   "title": "Feedback beta tester sull'onboarding",
+   "type": "Audio",
+   "icon": "audio",
+   "date": "20 set 2026",
+   "short": "20 set",
+   "origin": "Memo vocale",
+   "source": "iPhone · 2:14",
+   "tags": [
+    "feedback",
+    "onboarding"
+   ],
+   "links": 2,
+   "project": "onb",
+   "people": [
+    "paolo"
+   ],
+   "created": "20 set 2026, 19:02",
+   "updated": "20 set 2026, 19:04",
+   "summary": "Due tester si bloccano all'importazione dei dipendenti. Richiesta principale: import da Excel."
+  }
+ ],
+ "PEOPLE": [
+  {
+   "id": "marco",
+   "name": "Marco Rinaldi",
+   "ini": "MR",
+   "role": "CTO e co-founder",
+   "org": "Alpha",
+   "email": "marco@alpha.app",
+   "last": "12 set · Riunione settimanale",
+   "projects": [
+    "alpha",
+    "beta"
+   ],
+   "summary": "Co-founder e responsabile tecnico. Nelle ultime 4 settimane avete preso insieme 2 decisioni su Alpha; 3 attività aperte vi collegano.",
+   "note": "Preferisce ricevere le proposte per iscritto prima delle riunioni. Disponibile il martedì mattina.",
+   "hist": [
+    [
+     "12 set",
+     "Riunione settimanale"
+    ],
+    [
+     "9 set",
+     "Email: bozza della strategia"
+    ],
+    [
+     "2 set",
+     "Call sul round seed"
+    ]
+   ]
+  },
+  {
+   "id": "luca",
+   "name": "Luca Ferri",
+   "ini": "LF",
+   "role": "Product designer",
+   "org": "Alpha",
+   "email": "luca@alpha.app",
+   "last": "18 set · Call onboarding",
+   "projects": [
+    "alpha",
+    "onb",
+    "site"
+   ],
+   "summary": "Segue il design di Alpha e del nuovo onboarding. Ha proposto l'idea freemium del 18 settembre.",
+   "note": "Lavora meglio con riferimenti visivi. In ferie dal 6 al 10 ottobre.",
+   "hist": [
+    [
+     "18 set",
+     "Call sull'onboarding"
+    ],
+    [
+     "12 set",
+     "Riunione settimanale"
+    ]
+   ]
+  },
+  {
+   "id": "sara",
+   "name": "Sara Bianchi",
+   "ini": "SB",
+   "role": "Partner",
+   "org": "Vento Capital",
+   "email": "sara@vento.vc",
+   "last": "15 set · Email term sheet",
+   "projects": [
+    "beta"
+   ],
+   "summary": "Lead investor del round seed. Attende una risposta sul term sheet dal 19 settembre.",
+   "note": "Conosciuta a SMAU 2025. Interessata ai dati di retention della beta.",
+   "flag": "Da ricontattare",
+   "hist": [
+    [
+     "15 set",
+     "Email con term sheet"
+    ],
+    [
+     "4 set",
+     "Incontro a Milano"
+    ]
+   ]
+  },
+  {
+   "id": "elena",
+   "name": "Elena Moretti",
+   "ini": "EM",
+   "role": "Avvocata",
+   "org": "Studio Moretti",
+   "email": "e.moretti@studiomoretti.it",
+   "last": "8 set · Call",
+   "projects": [
+    "beta"
+   ],
+   "summary": "Consulente legale per il round seed. Deve rivedere la clausola di vesting del term sheet.",
+   "note": "Tariffa concordata a progetto.",
+   "hist": [
+    [
+     "8 set",
+     "Call sulla struttura del round"
+    ]
+   ]
+  },
+  {
+   "id": "paolo",
+   "name": "Paolo Galli",
+   "ini": "PG",
+   "role": "Responsabile HR",
+   "org": "Turni Srl · beta tester",
+   "email": "p.galli@turni.it",
+   "last": "20 set · Feedback",
+   "projects": [
+    "onb",
+    "alpha"
+   ],
+   "summary": "Beta tester di Alpha, 40 dipendenti su 3 negozi. Ha segnalato il blocco nell'import dei dipendenti.",
+   "note": "Disponibile per test settimanali.",
+   "hist": [
+    [
+     "20 set",
+     "Feedback sull'onboarding"
+    ]
+   ]
+  }
+ ],
+ "PROJ": [
+  {
+   "id": "alpha",
+   "name": "Progetto Alpha",
+   "status": "Attivo",
+   "desc": "App B2B per pianificare i turni del personale in negozi e ristoranti.",
+   "pct": 62,
+   "next": "Beta privata · 2 ott",
+   "people": [
+    "marco",
+    "luca",
+    "paolo"
+   ],
+   "items": 18,
+   "goals": [
+    [
+     "Definire il modello di prezzo",
+     true
+    ],
+    [
+     "Beta privata con 20 aziende",
+     false
+    ],
+    [
+     "Onboarding sotto i 10 minuti",
+     false
+    ]
+   ],
+   "brief": [
+    "La decisione sul pricing del 12 settembre è in conflitto con un'idea registrata il 18.",
+    "3 attività scadono entro lunedì; la demo per la beta privata è la più critica."
+   ]
+  },
+  {
+   "id": "beta",
+   "name": "Round seed",
+   "status": "Attivo",
+   "desc": "Raccolta di 800 k€ per 18 mesi di runway.",
+   "pct": 40,
+   "next": "Risposta al term sheet · 30 set",
+   "people": [
+    "sara",
+    "elena",
+    "marco"
+   ],
+   "items": 9,
+   "goals": [
+    [
+     "Obiettivo e struttura del round",
+     true
+    ],
+    [
+     "Term sheet firmato",
+     false
+    ],
+    [
+     "Closing entro ottobre",
+     false
+    ]
+   ],
+   "brief": [
+    "Sara attende una risposta sul term sheet da 5 giorni.",
+    "La clausola di vesting va rivista con Elena prima di rispondere."
+   ]
+  },
+  {
+   "id": "onb",
+   "name": "Onboarding clienti",
+   "status": "Attivo",
+   "desc": "Ridurre il tempo di configurazione per i nuovi clienti.",
+   "pct": 25,
+   "next": "Import da Excel · 10 ott",
+   "people": [
+    "luca",
+    "paolo"
+   ],
+   "items": 6,
+   "goals": [
+    [
+     "Mappare il flusso attuale",
+     true
+    ],
+    [
+     "Import dipendenti da Excel",
+     false
+    ]
+   ],
+   "brief": [
+    "Il feedback dei beta tester indica l'import dei dipendenti come primo blocco."
+   ]
+  },
+  {
+   "id": "site",
+   "name": "Nuovo sito",
+   "status": "In pausa",
+   "desc": "Sito pubblico per il lancio di gennaio.",
+   "pct": 10,
+   "next": "Ripresa a novembre",
+   "people": [
+    "luca"
+   ],
+   "items": 3,
+   "goals": [
+    [
+     "Architettura dei contenuti",
+     false
+    ]
+   ],
+   "brief": [
+    "Progetto in pausa fino a novembre."
+   ]
+  }
+ ],
+ "TASKS": [
+  {
+   "id": "t2",
+   "title": "Rispondere a Sara sul term sheet",
+   "project": "beta",
+   "prio": 3,
+   "due": "Ieri",
+   "group": "overdue",
+   "src": "k6",
+   "srcLabel": "Email · 15 set"
+  },
+  {
+   "id": "t1",
+   "title": "Aggiornare il listino con il piano unico a 29 €",
+   "project": "alpha",
+   "prio": 3,
+   "due": "Oggi",
+   "group": "today",
+   "src": "k1",
+   "srcLabel": "Decisione · 12 set"
+  },
+  {
+   "id": "t3",
+   "title": "Rivedere il flusso di onboarding con Luca",
+   "project": "alpha",
+   "prio": 2,
+   "due": "Ven 25 set",
+   "group": "week",
+   "src": "k3",
+   "srcLabel": "Riunione · 12 set"
+  },
+  {
+   "id": "t4",
+   "title": "Preparare la demo per la beta privata",
+   "project": "alpha",
+   "prio": 3,
+   "due": "Lun 28 set",
+   "group": "week",
+   "src": "k3",
+   "srcLabel": "Riunione · 12 set"
+  },
+  {
+   "id": "t5",
+   "title": "Chiedere a Elena la clausola di vesting",
+   "project": "beta",
+   "prio": 2,
+   "due": "Mar 29 set",
+   "group": "week",
+   "src": null,
+   "srcLabel": "Inbox · oggi"
+  },
+  {
+   "id": "t6",
+   "title": "Scrivere le FAQ per i beta tester",
+   "project": "onb",
+   "prio": 1,
+   "due": "5 ott",
+   "group": "later",
+   "src": null,
+   "srcLabel": ""
+  },
+  {
+   "id": "t7",
+   "title": "Valutare un piano freemium per team piccoli",
+   "project": "alpha",
+   "prio": 1,
+   "due": "8 ott",
+   "group": "later",
+   "src": "k5",
+   "srcLabel": "Idea · 18 set"
+  },
+  {
+   "id": "t8",
+   "title": "Definire le metriche di attivazione",
+   "project": "onb",
+   "prio": 2,
+   "due": "12 ott",
+   "group": "later",
+   "src": "k8",
+   "srcLabel": "Memo · 20 set"
+  }
+ ]
+}
