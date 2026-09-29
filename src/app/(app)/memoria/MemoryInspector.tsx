@@ -18,7 +18,7 @@ const GROUPS: [FactCategory | null, string, string][] = [
   [null, "Da classificare", "L'IA li assegna a un gruppo alla prossima apertura"],
 ];
 const CATEGORY_LABEL: Record<string, string> = { personale: "Personale", lavoro: "Lavoro", persone: "Persone", preferenze: "Preferenze" };
-const SOURCE: Record<string, string> = { chat: "dall'Assistente", comando: "da un comando", manuale: "scritto da te", suggerimento: "da un suggerimento" };
+const SOURCE: Record<string, string> = { chat: "dall'Assistente", comando: "da un comando", manuale: "scritto da te", suggerimento: "da un suggerimento", cattura: "da una cattura" };
 const ORIGIN: Record<string, string> = { declared: "detto da te", inferred: "dedotto dall'IA", observed: "letto in un elemento" };
 
 const dayLabel = (d: string | number) =>

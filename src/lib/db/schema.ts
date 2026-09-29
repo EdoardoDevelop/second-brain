@@ -23,6 +23,8 @@ export type Proposal = {
   tags: string[];
   links: { id: string; conflict: boolean; reason: string }[];
   tasks: string[];
+  /** Fatti stabili sull'utente emersi dal contenuto: alla conferma vanno anche in «Cosa so di te». */
+  facts?: string[];
 };
 
 export const items = sqliteTable("items", {

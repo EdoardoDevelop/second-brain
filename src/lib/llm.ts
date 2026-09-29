@@ -99,10 +99,26 @@ export class LlmError extends Error {
   constructor(message: string, public status = 0) { super(message); }
 }
 
+/** Campi con più tipi possibili (es. «stringa o null») in uno schema JSON. */
+function unionCount(s: unknown): number {
+  if (!s || typeof s !== "object") return 0;
+  if (Array.isArray(s)) return s.reduce((n: number, x) => n + unionCount(x), 0);
+  const o = s as Record<string, unknown>;
+  const self = Array.isArray(o.anyOf) || Array.isArray(o.oneOf) || Array.isArray(o.type) ? 1 : 0;
+  return self + Object.values(o).reduce((n: number, v) => n + unionCount(v), 0);
+}
+/** I modelli Claude rifiutano gli schemi rigorosi con più di 16 campi «unione» (errore 400 «Provider returned error»). */
+const CLAUDE_UNION_LIMIT = 16;
+
 async function send(req: LlmRequest, cfg: AiConfig, model: string, tier: AiTier): Promise<LlmResult> {
-  const system = req.messages[0]?.role === "system" && req.persona !== false
-    ? [{ ...req.messages[0], content: `${req.messages[0].content}\n\n${await userContext()}` } as LlmMessage, ...req.messages.slice(1)]
+  // Schema troppo complesso per il modello: niente vincolo rigido, lo schema va nelle istruzioni (la risposta la valida comunque callJSON).
+  const looseSchema = !!req.schema && model.startsWith("anthropic/") && unionCount(req.schema.schema) > CLAUDE_UNION_LIMIT;
+  const msgs = looseSchema && req.messages[0]?.role === "system"
+    ? [{ ...req.messages[0], content: `${req.messages[0].content}\n\nRispondi solo con un oggetto JSON valido, senza altro testo, conforme a questo JSON Schema (i campi che non servono a null):\n${JSON.stringify(req.schema!.schema)}` } as LlmMessage, ...req.messages.slice(1)]
     : req.messages;
+  const system = msgs[0]?.role === "system" && req.persona !== false
+    ? [{ ...msgs[0], content: `${msgs[0].content}\n\n${await userContext()}` } as LlmMessage, ...msgs.slice(1)]
+    : msgs;
   const stream = !!req.onDelta;
   const res = await fetch(`${OPENROUTER_URL}/chat/completions`, {
     method: "POST",
@@ -113,13 +129,13 @@ async function send(req: LlmRequest, cfg: AiConfig, model: string, tier: AiTier)
       ...(req.temperature != null ? { temperature: req.temperature } : {}),
       messages: system,
       ...(req.tools?.length ? { tools: req.tools, tool_choice: "auto" } : {}),
-      ...(req.schema ? { response_format: { type: "json_schema", json_schema: { name: req.schema.name, strict: true, schema: req.schema.schema } } } : {}),
+      ...(req.schema && !looseSchema ? { response_format: { type: "json_schema", json_schema: { name: req.schema.name, strict: true, schema: req.schema.schema } } } : {}),
       ...(stream ? { stream: true } : {}),
       usage: { include: true },
       provider: {
         data_collection: cfg.dataCollection,
         ...(cfg.privacy === "zdr" ? { zdr: true } : {}),
-        ...(req.schema || req.tools?.length ? { require_parameters: true } : {}),
+        ...((req.schema && !looseSchema) || req.tools?.length ? { require_parameters: true } : {}),
       },
     }),
     signal: req.signal ?? AbortSignal.timeout(req.timeoutMs ?? ((req.maxTokens ?? 4000) > 4000 ? 240_000 : 120_000)),

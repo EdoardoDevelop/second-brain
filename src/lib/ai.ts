@@ -47,6 +47,7 @@ const ProposalSchema = z.object({
     .array(z.object({ id: z.string(), conflict: z.boolean(), reason: z.string() }))
     .describe("Elementi esistenti collegati (max 4). conflict=true se il contenuto li contraddice"),
   tasks: z.array(z.string()).describe("Attività concrete che emergono dal contenuto, anche nessuna"),
+  facts: z.array(z.string()).describe("Fatti stabili che l'utente dice su di sé (abitudini, orari e giorni in cui fa le cose, preferenze, lavoro, persone della sua vita), in terza persona e brevi, es. «Fa i lavori di casa il sabato». Mai quelli già in <fatti_noti> né cose passeggere. Vuoto se non ce ne sono."),
 });
 
 const SYSTEM = `Sei il motore di classificazione di un "Second Brain" personale, in italiano.
@@ -57,12 +58,14 @@ Usa solo id di progetti ed elementi presenti nel contesto.`;
 
 
 export async function classify(content: string, ctx: MemoryContext): Promise<Proposal> {
+  const known = await db.select({ text: facts.text }).from(facts).where(eq(facts.status, "confirmed")).limit(80);
   const out = await complete(
     ProposalSchema,
     "proposta",
     SYSTEM,
-    `<memoria>\n${JSON.stringify(ctx)}\n</memoria>\n\n<contenuto_catturato>\n${content}\n</contenuto_catturato>`,
+    `<memoria>\n${JSON.stringify(ctx)}\n</memoria>${known.length ? `\n\n<fatti_noti>\n${known.map((f) => f.text).join("\n")}\n</fatti_noti>` : ""}\n\n<contenuto_catturato>\n${content}\n</contenuto_catturato>`,
   );
+  const knownLower = new Set(known.map((f) => f.text.toLowerCase()));
 
   const projectIds = new Set(ctx.projects.map((p) => p.id));
   const itemIds = new Set(ctx.items.map((i) => i.id));
@@ -71,6 +74,7 @@ export async function classify(content: string, ctx: MemoryContext): Promise<Pro
     projectId: out.projectId && projectIds.has(out.projectId) ? out.projectId : null,
     links: out.links.filter((l) => itemIds.has(l.id)).slice(0, 4),
     tags: out.tags.map((t) => t.replace(/^#/, "").toLowerCase()).slice(0, 6),
+    facts: [...new Set(out.facts.map((f) => f.replace(/\s+/g, " ").trim().slice(0, 300)))].filter((f) => f.length > 3 && !knownLower.has(f.toLowerCase())).slice(0, 3),
   };
 }
 
@@ -87,6 +91,7 @@ export function manualProposal(content: string): Proposal {
     tags: [],
     links: [],
     tasks: [],
+    facts: [],
   };
 }
 

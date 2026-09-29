@@ -133,6 +133,7 @@ export async function confirm(id: string, p: Proposal) {
   for (const title of taskTitles) {
     await db.insert(tasks).values({ id: newId("ta"), title, projectId: p.projectId, prio: 2, sourceItemId: id, createdAt: now });
   }
+  for (const f of p.facts ?? []) await addFact(f, "cattura", { sourceRef: id });
   await log("Classificazione", id, "Confermata" + (taskTitles.length ? ` · ${taskTitles.length} attività create` : ""));
   emit("item.confirmed", { id, type: p.type, title: p.title, tags: p.tags, projectId: p.projectId, people: p.people, tasks: taskTitles });
   refreshAll();

@@ -351,6 +351,17 @@ function ProposalEditor({ content, proposal: p, onChange, projects, memory, busy
               ))}
             </>
           )}
+          {!!p.facts?.length && (
+            <>
+              <div className="eyebrow" style={{ marginTop: 10 }}>Da ricordare su di te</div>
+              {p.facts.map((f) => (
+                <div key={f} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 14, padding: "6px 0", borderTop: "1px solid var(--color-divider)" }}>
+                  <span style={{ flex: 1 }}>{f}</span>
+                  <button className="btn btn-ghost btn-icon" title="Non ricordare" onClick={() => set({ facts: p.facts!.filter((x) => x !== f) })} style={{ width: 24, height: 24, color: "var(--muted)" }}><Icon name="x" size={12} /></button>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 24px", borderTop: "1px solid var(--color-divider)", flexWrap: "wrap" }}>
