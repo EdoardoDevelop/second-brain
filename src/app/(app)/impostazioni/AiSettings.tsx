@@ -346,7 +346,7 @@ function GardenBox({ over, onDone }: { over: AiOverview | null; onDone: () => vo
       title="Ultimo riordino"
       desc={!g ? "Non ancora eseguito: parte da solo stanotte."
         : g.error ? <span style={{ color: "var(--danger)" }}>{when} · errore: {g.error}</span>
-        : `${when} · ${g.linked} collegamenti aggiunti · ${g.retagged} elementi con tag uniformati · ${g.proposed} proposte da confermare`}
+        : `${when} · ${g.linked} collegamenti aggiunti · ${g.retagged} elementi con tag uniformati · ${g.proposed} proposte da confermare${g.facts ? ` (${g.facts} sui fatti su di te)` : ""}`}
     >
       <button className="btn btn-secondary" disabled={pending} onClick={() => start(async () => { await runGarden(); onDone(); })} style={{ gap: 6 }}>
         {pending ? <span className="spin" /> : <Icon name="refresh" size={14} />}Riordina ora

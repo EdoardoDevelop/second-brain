@@ -1,10 +1,10 @@
 import "server-only";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db, newId } from "./db";
-import { attachments, goals, itemPeople, items, links, people, projects, tasks } from "./db/schema";
+import { attachments, facts, goals, itemPeople, items, links, people, projects, tasks } from "./db/schema";
 import type { CommandAction } from "./ai";
 import { captureText } from "./capture";
-import { reminderFields } from "./format";
+import { isoDay, reminderFields } from "./format";
 import { log } from "./pipeline";
 import { emit } from "./webhooks";
 
@@ -154,6 +154,11 @@ ${a.text.trim()}` : a.text.trim(), updatedAt: new Date() }).where(eq(items.id, a
         if (!a.itemId || !a.targetId || a.itemId === a.targetId) continue;
         if (!(await mergeItems(a.itemId, a.targetId))) continue;
         break;
+      case "confirm_fact":
+      case "end_fact":
+      case "merge_facts":
+        if (!a.factId || !(await factAction(a))) continue;
+        break;
     }
     done.push(a.label);
     await log(origin === "web" ? a.label : `API: ${a.label}`, a.itemId ?? null, origin === "web" ? "Confermata da te" : "Eseguita via API");
@@ -191,5 +196,35 @@ ${dup.content.trim()}` : "";
   await db.update(tasks).set({ sourceItemId: keepId }).where(eq(tasks.sourceItemId, dupId));
   await db.update(attachments).set({ itemId: keepId }).where(eq(attachments.itemId, dupId));
   await db.update(items).set({ status: "archived", updatedAt: new Date() }).where(eq(items.id, dupId));
+  return true;
+}
+
+/**
+ * Azioni sui fatti proposte dalla cura della memoria (sempre confermate dall'utente):
+ * confirm_fact = è ancora vero; end_fact = non più vero (storia, eventualmente sostituito da otherFactId);
+ * merge_facts = otherFactId è un doppione di factId: il testo (se dato) diventa quello unito e il doppione si toglie.
+ */
+async function factAction(a: CommandAction): Promise<boolean> {
+  const ids = [a.factId, a.otherFactId].filter((x): x is string => !!x);
+  const rows = await db.select({ id: facts.id, status: facts.status }).from(facts).where(inArray(facts.id, ids));
+  const fact = rows.find((f) => f.id === a.factId);
+  const other = rows.find((f) => f.id === a.otherFactId);
+  if (!fact) return false;
+  const now = new Date();
+  if (a.kind === "confirm_fact") {
+    await db.update(facts).set({ status: "confirmed", lastConfirmedAt: now, validUntil: null, supersededBy: null }).where(eq(facts.id, fact.id));
+  } else if (a.kind === "end_fact") {
+    if (fact.status === "obsolete") return false;
+    const yesterday = isoDay(new Date(Date.parse(isoDay() + "T12:00:00Z") - 86400000));
+    await db.update(facts).set({ status: "obsolete", validUntil: yesterday, supersededBy: other?.id ?? null }).where(eq(facts.id, fact.id));
+    // Il fatto che lo sostituisce è appena stato ritenuto quello vero: vale come conferma.
+    if (other) await db.update(facts).set({ status: "confirmed", lastConfirmedAt: now }).where(eq(facts.id, other.id));
+  } else {
+    if (!other || other.id === fact.id) return false;
+    const text = a.text?.replace(/\s+/g, " ").trim().slice(0, 300);
+    await db.update(facts).set({ ...(text ? { text } : {}), status: "confirmed", lastConfirmedAt: now }).where(eq(facts.id, fact.id));
+    await db.update(facts).set({ supersededBy: fact.id }).where(eq(facts.supersededBy, other.id));
+    await db.delete(facts).where(eq(facts.id, other.id));
+  }
   return true;
 }

@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { and, desc, eq, gte, inArray, ne } from "drizzle-orm";
 import { db, newId } from "./db";
-import { goals, insights, itemPeople, items, links, people, projects, tasks, type Why } from "./db/schema";
+import { facts, goals, insights, itemPeople, items, links, people, projects, tasks, type Why } from "./db/schema";
 import { cleanActions, CommandActionSchema, type CommandAction } from "./ai";
 import { TOOL_BY_NAME } from "./api-core";
 import { dueInfo, isoDay } from "./format";
@@ -235,9 +235,11 @@ export async function listInsights(): Promise<InsightRow[]> {
   const ctx = await commandContext();
   const ids = [...new Set(rows.flatMap((r) => (r.actions as CommandAction[]).flatMap((a) => [a.itemId, a.targetId]).filter((x): x is string => !!x)))];
   const extra = ids.length ? await db.select({ id: items.id, title: items.title }).from(items).where(inArray(items.id, ids)) : [];
+  const factIds = [...new Set(rows.flatMap((r) => (r.actions as CommandAction[]).flatMap((a) => [a.factId, a.otherFactId]).filter((x): x is string => !!x)))];
+  const factRows = factIds.length ? await db.select({ id: facts.id, title: facts.text }).from(facts).where(inArray(facts.id, factIds)) : [];
   const names = Object.fromEntries([
     ...[...ctx.projects, ...ctx.people].map((x) => [x.id, x.name]),
-    ...[...ctx.tasks, ...ctx.items, ...ctx.goals, ...extra].map((x) => [x.id, x.title]),
+    ...[...ctx.tasks, ...ctx.items, ...ctx.goals, ...extra, ...factRows].map((x) => [x.id, x.title]),
   ]);
   return rows.map((r) => ({ id: r.id, kind: r.kind, title: r.title, body: r.body, actions: r.actions as CommandAction[], names, refs: r.refs, why: r.why ?? [] }));
 }

@@ -155,13 +155,25 @@ export const CommandActionSchema = z.object({
   email: z.string().nullable(),
   note: z.string().nullable().describe("upsert_person: note personali da aggiungere"),
 });
-export type CommandAction = z.infer<typeof CommandActionSchema>;
+/**
+ * Azioni sui fatti su di te: solo nelle proposte della cura notturna (mai dal modello dei comandi).
+ * factId è il fatto su cui agire; otherFactId il doppione da togliere (merge_facts) o il fatto che lo sostituisce (end_fact).
+ */
+export const FACT_KINDS = ["merge_facts", "end_fact", "confirm_fact"] as const;
+export type ActionKind = CommandKind | (typeof FACT_KINDS)[number];
+export type CommandAction = Omit<z.infer<typeof CommandActionSchema>, "kind"> & {
+  kind: ActionKind;
+  factId?: string | null;
+  otherFactId?: string | null;
+  /** false = proposta come alternativa, non spuntata all'inizio. */
+  on?: boolean;
+};
 
 const CommandSchema = z.object({
   transcript: z.string().describe("Trascrizione fedele dell'audio, oppure il testo ricevuto"),
   actions: z.array(CommandActionSchema).describe("Azioni da proporre, nell'ordine; vuoto se non si capisce la richiesta"),
 });
-export type CommandResult = z.infer<typeof CommandSchema>;
+export type CommandResult = Omit<z.infer<typeof CommandSchema>, "actions"> & { actions: CommandAction[] };
 
 export type CommandContext = {
   today: string;

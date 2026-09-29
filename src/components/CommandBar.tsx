@@ -5,13 +5,13 @@ import { Icon } from "@/components/ui";
 import type { IconName } from "@/lib/icons";
 import { addFact, interpret, runCommand } from "@/lib/actions";
 import type { ProposedFact } from "@/lib/chat";
-import type { CommandAction, CommandKind } from "@/lib/ai";
+import type { ActionKind, CommandAction } from "@/lib/ai";
 import { dueInfo } from "@/lib/format";
 import { useRecorder } from "./useRecorder";
 import { CommandHelpButton } from "./CommandHelp";
 import { VoiceStage } from "./VoiceStage";
 
-export const KIND: Record<CommandKind, [string, IconName]> = {
+export const KIND: Record<ActionKind, [string, IconName]> = {
   capture: ["Cattura in Inbox", "inbox"],
   add_task: ["Nuova attività", "tasks"],
   complete_task: ["Completa attività", "check"],
@@ -32,6 +32,9 @@ export const KIND: Record<CommandKind, [string, IconName]> = {
   favorite_item: ["Preferiti", "star"],
   link_items: ["Collega elementi", "link"],
   merge_items: ["Unisci doppioni", "archive"],
+  merge_facts: ["Unisci fatti", "user"],
+  end_fact: ["Non più vero", "archive"],
+  confirm_fact: ["È ancora vero", "check"],
 };
 
 const PRIO = ["", "Alta", "Media", "Bassa"];
@@ -235,6 +238,13 @@ export function ActionCard({ a, names, onChange }: { a: CommandAction & { on: bo
           {a.kind === "update_project" && a.projectId && <span style={{ color: "var(--color-text)", textTransform: "none", letterSpacing: 0 }}>· {names[a.projectId]}</span>}
           {a.kind === "upsert_person" && <span style={{ color: "var(--muted)", textTransform: "none", letterSpacing: 0 }}>· {a.personId ? "modifica " + names[a.personId] : "nuova"}</span>}
         </div>
+        {(a.kind === "end_fact" || a.kind === "confirm_fact") && <div style={{ fontSize: 14, lineHeight: 1.45 }}>{a.label}</div>}
+        {a.kind === "merge_facts" && a.factId && (
+          <>
+            <textarea className="input" value={a.text ?? names[a.factId] ?? ""} onChange={(e) => onChange({ text: e.target.value })} rows={2} style={{ fontSize: 14 }} aria-label="Testo del fatto che resta" />
+            {a.otherFactId && <span className="muted" style={{ fontSize: 13 }}>Toglie il doppione «{names[a.otherFactId] ?? a.otherFactId}»</span>}
+          </>
+        )}
         {(a.kind === "capture" || a.kind === "append_item") && <textarea className="input" value={a.text ?? ""} onChange={(e) => onChange({ text: e.target.value })} rows={3} style={{ fontSize: 14 }} />}
         {(a.kind === "add_task" || a.kind === "add_goal" || a.kind === "create_project") && <input {...input} value={a.title ?? ""} onChange={(e) => onChange({ title: e.target.value })} />}
         {a.kind === "upsert_person" && <input {...input} value={a.name ?? (a.personId ? names[a.personId] : "") ?? ""} onChange={(e) => onChange({ name: e.target.value })} placeholder="Nome" />}

@@ -62,11 +62,17 @@ function Card({ x, k, onGone }: { x: Insight; k: number; onGone: () => void }) {
   const [open, setOpen] = useState(false);
   const [showWhy, setShowWhy] = useState(false);
   const why = x.why ?? [];
-  const [cards, setCards] = useState(x.actions.map((a) => ({ ...a, on: true })));
+  const [cards, setCards] = useState(x.actions.map((a) => ({ ...a, on: a.on !== false })));
   const [state, setState] = useState<"idle" | "saving" | "done">("idle");
   const [, start] = useTransition();
   const [label, icon] = KIND[x.kind] ?? KIND.other;
   const chosen = cards.filter((c) => c.on).map(({ on: _on, ...a }) => a);
+  // Le azioni sullo stesso fatto sono alternative («è ancora vero» / «non più vero»): se ne spunta una sola.
+  const change = (i: number, p: Partial<CommandAction & { on: boolean }>) => setCards((l) => l.map((y, j) => {
+    if (j === i) return { ...y, ...p };
+    const f = l[i].factId;
+    return p.on && f && (y.factId === f || (l[i].kind === "end_fact" && y.kind === "end_fact" && y.factId === l[i].otherFactId)) ? { ...y, on: false } : y;
+  }));
 
   const accept = () => {
     setState("saving");
@@ -99,7 +105,7 @@ function Card({ x, k, onGone }: { x: Insight; k: number; onGone: () => void }) {
       )}
       {open && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {cards.map((c, i) => <ActionCard key={i} a={c} names={x.names} onChange={(p) => setCards((l) => l.map((y, j) => (j === i ? { ...y, ...p } : y)))} />)}
+          {cards.map((c, i) => <ActionCard key={i} a={c} names={x.names} onChange={(p) => change(i, p)} />)}
         </div>
       )}
       <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: "auto", paddingTop: 4 }}>

@@ -1,8 +1,10 @@
 import "server-only";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db, newId } from "./db";
-import { insights, items, links, type Why } from "./db/schema";
+import { facts, insights, items, links, type Why } from "./db/schema";
+import { createHash } from "node:crypto";
+import type { CommandAction } from "./ai";
 import { isoDay, shortDate } from "./format";
 import { budgetState, callJSON } from "./llm";
 import { log } from "./pipeline";
@@ -13,11 +15,15 @@ import { getAiConfig, getSetting, setSetting } from "./settings";
  * Cura della memoria, ogni notte (e su richiesta dalle Impostazioni), con il modello veloce:
  * - da sola, perché aggiunge e non toglie nulla: collega gli elementi affini o in conflitto e uniforma i tag
  *   scritti in modi diversi (singolare/plurale, maiuscole, sinonimi evidenti);
- * - come proposta da confermare nella Home («Da riordinare»): unire i doppioni e archiviare ciò che è superato.
+ * - come proposta da confermare nella Home («Da riordinare»): unire i doppioni e archiviare ciò che è superato;
+ * - lo stesso per i fatti su di te: doppioni da unire, contraddizioni da risolvere, fatti vecchi da riconfermare.
+ *   I fatti non si toccano mai da soli: né stato né testo cambiano senza conferma.
  * Tutto finisce nel registro IA. Le coppie già valutate non si ripropongono.
  */
 
-export type GardenStatus = { at: number; linked: number; retagged: number; proposed: number; error: string | null };
+export type GardenStatus = { at: number; linked: number; retagged: number; proposed: number; facts?: number; error: string | null };
+
+type Card = { title: string; body: string; refs: { id: string; title: string; href: string }[]; actions: CommandAction[]; why: Why[] };
 
 const PairSchema = z.object({
   pairs: z.array(z.object({
@@ -35,7 +41,26 @@ const TagSchema = z.object({
     .describe("Solo varianti dello stesso tag (singolare/plurale, refusi, maiuscole, sinonimi evidenti). Vuoto se non ce ne sono."),
 });
 
+const FactSchema = z.object({
+  duplicates: z.array(z.object({
+    keep: z.string().describe("id del fatto che resta (il più completo)"),
+    drop: z.string().describe("id del doppione da togliere"),
+    text: z.string().nullable().describe("Formulazione unita, se il doppione aggiunge un dettaglio; altrimenti null"),
+    reason: z.string(),
+  })).describe("Solo fatti che dicono la stessa cosa"),
+  conflicts: z.array(z.object({
+    a: z.string(), b: z.string(),
+    current: z.enum(["a", "b", "unknown"]).describe("Quale dei due è probabilmente vero oggi (di solito il più recente); unknown se non si può dire"),
+    reason: z.string(),
+  })).describe("Fatti che non possono essere veri insieme (es. due lavori attuali diversi)"),
+  outdated: z.array(z.object({ id: z.string(), reason: z.string() }))
+    .describe("Fatti legati a un momento che oggi è probabilmente passato (es. «sto cercando casa» di molti mesi fa, un evento con una data già trascorsa)"),
+});
+
 const SEEN_MAX = 3000;
+/** Oltre questo tempo senza conferme un fatto va ricontrollato (come nel Memory Inspector). */
+const STALE_MS = 180 * 86400000;
+const MAX_FACT_CARDS = 3;
 
 export async function gardenMemory(): Promise<GardenStatus> {
   const status: GardenStatus = { at: Date.now(), linked: 0, retagged: 0, proposed: 0, error: null };
@@ -52,7 +77,8 @@ export async function gardenMemory(): Promise<GardenStatus> {
       .filter((p) => byId.has(p.a) && byId.has(p.b) && !seen.has(`${p.a}|${p.b}`) && !linked.has(`${p.a}|${p.b}`))
       .slice(0, 20);
 
-    const cards: { title: string; body: string; refs: string[]; actions: Record<string, unknown>[]; why: Why[] }[] = [];
+    const cards: Card[] = [];
+    const ref = (id: string) => ({ id, title: byId.get(id)!.title, href: `/conoscenza/${id}` });
     const score = new Map(pairs.flatMap((p) => [[`${p.a}|${p.b}`, p.score], [`${p.b}|${p.a}`, p.score]] as [string, number][]));
     /** I dati che hanno fatto notare la coppia: somiglianza, tipi e date, tag e progetto in comune. */
     const pairWhy = (a: string, b: string): Why[] => {
@@ -84,13 +110,13 @@ export async function gardenMemory(): Promise<GardenStatus> {
           status.linked++;
         } else if (r.relation === "duplicate") {
           cards.push({
-            title: `«${B.title}» sembra un doppione di «${A.title}»`, body: r.reason, refs: [keep, other],
-            actions: [{ kind: "merge_items", label: `Unisci «${B.title}» in «${A.title}»`, itemId: keep, targetId: other, reason: r.reason }], why: pairWhy(keep, other),
+            title: `«${B.title}» sembra un doppione di «${A.title}»`, body: r.reason, refs: [ref(keep), ref(other)],
+            actions: [{ kind: "merge_items", label: `Unisci «${B.title}» in «${A.title}»`, itemId: keep, targetId: other, reason: r.reason } as CommandAction], why: pairWhy(keep, other),
           });
         } else if (r.relation === "supersedes") {
           cards.push({
-            title: `«${B.title}» sembra superato da «${A.title}»`, body: r.reason, refs: [keep, other],
-            actions: [{ kind: "archive_item", label: `Archivia «${B.title}»`, itemId: other }], why: [...pairWhy(keep, other), { text: `«${A.title}» è più recente o più completo` }],
+            title: `«${B.title}» sembra superato da «${A.title}»`, body: r.reason, refs: [ref(keep), ref(other)],
+            actions: [{ kind: "archive_item", label: `Archivia «${B.title}»`, itemId: other } as CommandAction], why: [...pairWhy(keep, other), { text: `«${A.title}» è più recente o più completo` }],
           });
         }
       }
@@ -126,21 +152,118 @@ export async function gardenMemory(): Promise<GardenStatus> {
       }
     }
 
-    // 3. Proposte da confermare nella Home (sostituiscono quelle precedenti non ancora viste).
+    // 3. Fatti su di te: solo proposte.
+    // Un errore qui non deve far perdere le proposte sugli elementi.
+    const factCards = await gardenFacts().catch(async (e: unknown) => {
+      await log("Cura della memoria: fatti", null, "Errore: " + (e instanceof Error ? e.message : "errore"));
+      return [] as Card[];
+    });
+    status.facts = factCards.length;
+
+    // 4. Proposte da confermare nella Home (sostituiscono quelle precedenti non ancora viste).
     await db.update(insights).set({ status: "dismissed" }).where(and(eq(insights.status, "new"), eq(insights.kind, "cleanup")));
     const day = isoDay();
-    for (const c of cards.slice(0, 5)) {
-      const refs = c.refs.map((id) => ({ id, title: byId.get(id)!.title, href: `/conoscenza/${id}` }));
-      await db.insert(insights).values({ id: newId("in"), day, kind: "cleanup", title: c.title.slice(0, 140), body: c.body.slice(0, 500), actions: c.actions, refs, why: c.why, status: "new", createdAt: new Date() });
+    for (const c of [...factCards, ...cards.slice(0, 5)]) {
+      await db.insert(insights).values({ id: newId("in"), day, kind: "cleanup", title: c.title.slice(0, 140), body: c.body.slice(0, 500), actions: c.actions, refs: c.refs, why: c.why, status: "new", createdAt: new Date() });
       status.proposed++;
     }
-    await log("Cura della memoria", null, `${status.linked} collegamenti aggiunti · ${status.retagged} elementi con tag uniformati · ${status.proposed} proposte da confermare`);
+    await log("Cura della memoria", null, `${status.linked} collegamenti aggiunti · ${status.retagged} elementi con tag uniformati · ${status.proposed} proposte da confermare (${status.facts} sui fatti)`);
   } catch (e) {
     status.error = e instanceof Error ? e.message : "Errore";
     await log("Cura della memoria", null, "Errore: " + status.error).catch(() => {});
   }
   await setSetting("garden_status", JSON.stringify(status)).catch(() => {});
   return status;
+}
+
+/**
+ * Controlla i fatti su di te: doppioni e contraddizioni (con il modello veloce, solo se i fatti sono cambiati
+ * dall'ultima volta) e fatti da riconfermare (senza conferme da oltre 180 giorni, o legati a un momento ormai passato).
+ * Ogni proposta si fa una volta sola: le chiavi già proposte stanno in `settings.garden_facts_seen`.
+ */
+async function gardenFacts(): Promise<Card[]> {
+  const list = await db.select().from(facts).where(inArray(facts.status, ["confirmed", "pending", "conflict"]));
+  if (!list.length) return [];
+  const byId = new Map(list.map((f) => [f.id, f]));
+  const seen = new Set<string>(JSON.parse((await getSetting("garden_facts_seen")) ?? "[]"));
+  const pairKey = (a: string, b: string) => "p:" + [a, b].sort().join("|");
+  // La chiave cambia a ogni conferma: un fatto riconfermato potrà essere richiesto di nuovo fra sei mesi.
+  const staleKey = (id: string) => `s:${id}:${byId.get(id)!.lastConfirmedAt?.getTime() ?? 0}`;
+  const used = new Set<string>();
+  const cards: Card[] = [];
+  const quote = (id: string) => `«${byId.get(id)!.text}»`;
+  const factWhy = (id: string, extra = ""): Why => {
+    const f = byId.get(id)!;
+    const last = f.lastConfirmedAt ?? f.createdAt;
+    const confirmed = last.getTime() !== f.createdAt.getTime() ? `, ultima conferma il ${shortDate(last)}` : "";
+    return { text: `${quote(id)}: ricordato il ${shortDate(f.createdAt)}${confirmed}${extra}`, href: "/memoria" };
+  };
+
+  // Doppioni e contraddizioni: l'IA li cerca solo quando l'elenco dei fatti è cambiato.
+  const hash = createHash("sha1").update(list.map((f) => `${f.id}:${f.text}`).sort().join("\n")).digest("hex");
+  const outdated: { id: string; reason: string }[] = [];
+  if ((await getSetting("garden_facts_hash")) !== hash) {
+    const out = await callJSON<z.infer<typeof FactSchema>>({
+      tier: "fast", task: "cura_fatti", name: "cura_fatti", maxTokens: 2500, temperature: 0, persona: false,
+      messages: [
+        { role: "system", content: `Controlli i fatti che l'utente di un Second Brain ha confermato su di sé. Oggi è il ${isoDay()}. Trova i doppioni (stessa informazione detta due volte), le contraddizioni (non possono essere veri insieme) e i fatti legati a un momento probabilmente passato. Sii prudente: fatti diversi sullo stesso argomento non sono doppioni né contraddizioni (es. «lavora in X» e «in X si occupa di Y» stanno bene insieme). Nel dubbio non segnalare nulla.` },
+        { role: "user", content: JSON.stringify(list.map((f) => ({ id: f.id, testo: f.text, dal: f.validFrom ?? isoDay(f.createdAt), ultima_conferma: isoDay(f.lastConfirmedAt ?? f.createdAt) }))) },
+      ],
+      jsonSchema: z.toJSONSchema(FactSchema),
+      parse: (v) => FactSchema.safeParse(v) as { success: true; data: z.infer<typeof FactSchema> } | { success: false },
+    });
+    await setSetting("garden_facts_hash", hash);
+
+    for (const d of out.duplicates) {
+      if (!byId.has(d.keep) || !byId.has(d.drop) || d.keep === d.drop || used.has(d.keep) || used.has(d.drop) || seen.has(pairKey(d.keep, d.drop))) continue;
+      seen.add(pairKey(d.keep, d.drop)); used.add(d.keep); used.add(d.drop);
+      const text = d.text?.trim() && d.text.trim() !== byId.get(d.keep)!.text ? d.text.trim() : null;
+      cards.push({
+        title: "Due fatti su di te dicono la stessa cosa", body: d.reason, refs: [],
+        actions: [{ kind: "merge_facts", label: `Tieni ${text ? `«${text}»` : quote(d.keep)} e togli il doppione`, factId: d.keep, otherFactId: d.drop, text } as CommandAction],
+        why: [factWhy(d.keep), factWhy(d.drop)],
+      });
+    }
+    for (const c of out.conflicts) {
+      if (!byId.has(c.a) || !byId.has(c.b) || c.a === c.b || used.has(c.a) || used.has(c.b) || seen.has(pairKey(c.a, c.b))) continue;
+      seen.add(pairKey(c.a, c.b)); used.add(c.a); used.add(c.b);
+      // Prima l'ipotesi dell'IA (spuntata), poi l'alternativa; se non sa quale sia vero oggi, nessuna spunta.
+      const [now, old] = c.current === "a" ? [c.a, c.b] : [c.b, c.a];
+      const pick = c.current !== "unknown";
+      cards.push({
+        title: "Due fatti su di te si contraddicono", body: `${c.reason}${pick ? "" : " Scegli quale è vero oggi."}`, refs: [],
+        actions: [
+          { kind: "end_fact", label: `Oggi vale ${quote(now)}: l'altro diventa storia`, factId: old, otherFactId: now, on: pick } as CommandAction,
+          { kind: "end_fact", label: `Oggi vale ${quote(old)}: l'altro diventa storia`, factId: now, otherFactId: old, on: false } as CommandAction,
+        ],
+        why: [factWhy(now), factWhy(old)],
+      });
+    }
+    outdated.push(...out.outdated.filter((o) => byId.has(o.id) && byId.get(o.id)!.status === "confirmed"));
+  }
+
+  // Da riconfermare: quelli che l'IA vede legati al passato e quelli senza conferme da oltre sei mesi.
+  const reasons = new Map(outdated.map((o) => [o.id, o.reason]));
+  for (const f of list) {
+    if (f.status === "confirmed" && Date.now() - (f.lastConfirmedAt ?? f.createdAt).getTime() > STALE_MS && !reasons.has(f.id)) reasons.set(f.id, "");
+  }
+  const stale = [...reasons].filter(([id]) => !used.has(id) && !seen.has(staleKey(id))).slice(0, 5);
+  if (stale.length && cards.length < MAX_FACT_CARDS) {
+    for (const [id] of stale) seen.add(staleKey(id));
+    const months = (id: string) => Math.floor((Date.now() - (byId.get(id)!.lastConfirmedAt ?? byId.get(id)!.createdAt).getTime()) / (30 * 86400000));
+    cards.push({
+      title: stale.length === 1 ? `È ancora vero che ${byId.get(stale[0][0])!.text.replace(/\.$/, "")}?` : `${stale.length} fatti su di te da riconfermare`,
+      body: "Spunta «Non più vero» per quelli che sono cambiati: resteranno come storia e l'IA smetterà di usarli come attuali.",
+      refs: [],
+      actions: stale.flatMap(([id]) => [
+        { kind: "confirm_fact", label: `È ancora vero: ${quote(id)}`, factId: id } as CommandAction,
+        { kind: "end_fact", label: `Non più vero: ${quote(id)}`, factId: id, on: false } as CommandAction,
+      ]),
+      why: stale.map(([id, reason]) => factWhy(id, reason ? ` · ${reason}` : ` · nessuna conferma da ${months(id)} mesi`)),
+    });
+  }
+  await setSetting("garden_facts_seen", JSON.stringify([...seen].slice(-SEEN_MAX)));
+  return cards.slice(0, MAX_FACT_CARDS);
 }
 
 export async function gardenStatus(): Promise<GardenStatus | null> {
@@ -155,6 +278,7 @@ export async function gardenTick() {
   await setSetting("garden_last", today);
   if (!(await getAiConfig()).apiKey || (await budgetState()).near) return;
   const count = await db.select({ id: items.id }).from(items).where(eq(items.status, "memory"));
-  if (count.length < 2) return;
+  const known = await db.select({ id: facts.id }).from(facts).where(eq(facts.status, "confirmed")).limit(1);
+  if (count.length < 2 && !known.length) return;
   await gardenMemory();
 }
