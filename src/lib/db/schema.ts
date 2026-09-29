@@ -88,6 +88,7 @@ export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
   projectId: text("project_id"),
+  /** Priorità: 1 = alta, 2 = media, 3 = bassa. */
   prio: integer("prio").notNull().default(2),
   /** Data di scadenza ISO (YYYY-MM-DD) o null. */
   due: text("due"),

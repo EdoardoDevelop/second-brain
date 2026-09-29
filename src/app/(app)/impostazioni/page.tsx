@@ -14,6 +14,8 @@ import { DEFAULT_MODEL, DEFAULT_MODELS, getAiConfig, getLook, getProfile, maskKe
 import { parseMode } from "@/lib/theme";
 import { DeleteAll, DensitySwitch, ImportBackup, LookEditor, ThemeSwitch } from "./SettingsClient";
 import { AiSettings } from "./AiSettings";
+import { BackupCard } from "./BackupCard";
+import { backupStatus, listBackups } from "@/lib/backup";
 
 export default async function SettingsPage() {
   await ready();
@@ -21,7 +23,7 @@ export default async function SettingsPage() {
   const jar = await cookies();
   const theme = parseMode(jar.get("sb_theme")?.value);
   const density = jar.get("sb_density")?.value === "compact" ? "compact" : "comfortable";
-  const [look, cfg, log, nItems, nProjects, nPeople, nTasks, notify, subs, bgs, profile, keys, hooks] = await Promise.all([
+  const [look, cfg, log, nItems, nProjects, nPeople, nTasks, notify, subs, bgs, profile, keys, hooks, bkStatus, bkList] = await Promise.all([
     getLook(),
     getAiConfig(),
     db.select({ id: aiLog.id, at: aiLog.at, action: aiLog.action, outcome: aiLog.outcome, title: items.title, itemId: aiLog.itemId })
@@ -36,6 +38,8 @@ export default async function SettingsPage() {
     getProfile(),
     db.select().from(apiKeys).orderBy(desc(apiKeys.createdAt)),
     db.select().from(webhooks).orderBy(webhooks.createdAt),
+    backupStatus(),
+    listBackups(),
   ]);
   // Indirizzo pubblico dell'app (dietro nginx arriva negli header inoltrati).
   const h = await headers();
@@ -146,6 +150,9 @@ export default async function SettingsPage() {
                 </div>
               ))}
             </div>
+          </SetCard>
+          <SetCard title="Backup automatico" icon="shield" desc="Ogni notte alle 2:30 una copia del database (e degli allegati nuovi) sul server: le ultime due settimane, poi una a settimana per due mesi. Scarica ogni tanto l'ultima copia per averne una anche fuori dal server.">
+            <BackupCard initial={bkStatus} copies={bkList.map((b) => ({ day: b.day, size: b.size }))} />
           </SetCard>
           <SetCard title="Esporta e ripristina" icon="download" desc="Il backup JSON contiene tutto (anche conversazioni, obiettivi e fatti su di te) e si può reimportare; il Markdown è leggibile ovunque. Gli allegati restano sul server.">
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

@@ -11,7 +11,10 @@ type T = { id: string; title: string; done: boolean; prio: number; due: string |
 
 const GROUPS: [DueGroup, string][] = [["overdue", "Scadute"], ["today", "Oggi"], ["week", "Questa settimana"], ["later", "Più avanti"], ["none", "Senza scadenza"]];
 const FILTERS = ["Aperte", "Oggi", "Completate", "Tutte"] as const;
-const PRIO = ["", "Bassa", "Media", "Alta"];
+/** 1 = Alta, 2 = Media, 3 = Bassa: la stessa convenzione di IA, comandi e API. */
+const PRIO = ["", "Alta", "Media", "Bassa"];
+/** Quante barre accese (su 3): più è importante, più barre. */
+const BARS = [0, 3, 2, 1];
 
 export function TasksView({ tasks, projects, aims }: { tasks: T[]; projects: { id: string; name: string }[]; aims: { id: string; title: string }[] }) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("Aperte");
@@ -87,8 +90,8 @@ export function TasksView({ tasks, projects, aims }: { tasks: T[]; projects: { i
                   <span className="tr-proj">{t.project && <span className="ellipsis" style={{ display: "inline-block", maxWidth: "100%", fontSize: 12, padding: "2px 8px", background: "var(--sel)", color: "var(--accent-text)" }}>{t.project}</span>}</span>
                   <span title={PRIO[t.prio]} style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 12 }}>
                     <span style={{ width: 4, height: 5, background: "var(--color-accent)" }} />
-                    <span style={{ width: 4, height: 8, background: t.prio >= 2 ? "var(--color-accent)" : "var(--skel)" }} />
-                    <span style={{ width: 4, height: 11, background: t.prio >= 3 ? "var(--color-accent)" : "var(--skel)" }} />
+                    <span style={{ width: 4, height: 8, background: (BARS[t.prio] ?? 2) >= 2 ? "var(--color-accent)" : "var(--skel)" }} />
+                    <span style={{ width: 4, height: 11, background: (BARS[t.prio] ?? 2) >= 3 ? "var(--color-accent)" : "var(--skel)" }} />
                     <span className="muted" style={{ fontSize: 12, marginLeft: 6, lineHeight: 1 }}>{PRIO[t.prio]}</span>
                   </span>
                   <label style={{ position: "relative", fontSize: 13, textAlign: "right", cursor: "pointer", color: t.group === "overdue" && !t.done ? "var(--danger)" : t.group === "today" ? "var(--color-text)" : "var(--muted)" }}>
@@ -165,7 +168,7 @@ export function TaskEditor({ task, projects, aims, onClose }: { task: EditableTa
         <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
           <span className="muted">Priorità</span>
           <div className="seg-sb">
-            {[1, 2, 3].map((n) => <button key={n} aria-pressed={prio === n} onClick={() => setPrio(n)} style={{ height: 34 }}>{PRIO[n]}</button>)}
+            {[3, 2, 1].map((n) => <button key={n} aria-pressed={prio === n} onClick={() => setPrio(n)} style={{ height: 34 }}>{PRIO[n]}</button>)}
           </div>
         </div>
         <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>

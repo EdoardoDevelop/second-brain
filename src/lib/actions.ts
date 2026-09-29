@@ -27,6 +27,7 @@ import { deleteAimRows, executeActions } from "./commands";
 import { buildOverview, forgetOverview, type Overview } from "./overview";
 import { closeFactQuestion, todayFactQuestion } from "./fact-question";
 import { detectHabits } from "./habits";
+import { listBackups, runBackup, type BackupStatus } from "./backup";
 import { deliver, emit, WEBHOOK_EVENTS } from "./webhooks";
 import { createApiKey } from "./api-keys";
 import { randomBytes } from "node:crypto";
@@ -278,6 +279,15 @@ export async function deleteTask(id: string) {
   await guard();
   await db.delete(tasks).where(eq(tasks.id, id));
   refreshAll();
+}
+
+// ——— Backup ———
+
+export async function runBackupNow(): Promise<{ status: BackupStatus; copies: { day: string; size: number }[] }> {
+  await guard();
+  const status = await runBackup();
+  await log("Backup", null, status.error ? "Errore: " + status.error : `${status.file} (${Math.round(status.size / 1024)} KB)`);
+  return { status, copies: (await listBackups()).map((b) => ({ day: b.day, size: b.size })) };
 }
 
 // ——— Quadro completo (vista derivata, non salvata in memoria) ———
