@@ -18,8 +18,9 @@ Web app per un solo utente, usata da computer e telefono (installabile come app)
 | **Quadro completo** | «Fammi il quadro completo di X» (Assistente, ⌘J o pulsanti su progetto, persona, obiettivo): stato, decisioni, problemi aperti, persone, contraddizioni e prossimi passi con le fonti; vista derivata, non salvata in memoria |
 | **Obiettivi** | Obiettivi personali (anche fuori dai progetti) con stato e scadenza; attività ed elementi collegati; l'IA li tiene presenti in risposte e suggerimenti e segnala quelli fermi o in scadenza |
 | **Timeline e Connessioni** | Cronologia per giorno; grafo 2D/3D di elementi, progetti, persone e concetti |
+| **Com'è andata oggi?** | La sera, quando c'è qualcosa di cui parlare (un primo giorno, un colloquio, una riunione, un obiettivo in scadenza), l'Assistente scrive come un amico: notifica e riquadro nella Home. Poche domande su ciò che la memoria non sa ancora; alla fine una scheda da confermare con nota di diario, persone, fatti e attività. Fascia oraria e frequenza in Impostazioni → Notifiche |
 | **Cosa so di te** | I fatti che l'IA sa di te, con provenienza, gruppi ed età (fresco, vecchio, forse superato); una domanda al giorno «È ancora vero che…?» anche nella Home; la cura notturna propone doppioni, contraddizioni e riconferme |
-| **Impostazioni** | Profilo, aspetto (temi, colori, carattere, sfondi), notifiche push, IA (modelli per compito, privacy, spesa del mese con tetto, confronto modelli), integrazioni, registro IA, backup |
+| **Impostazioni** | Backup automatico ogni notte (con download delle copie), profilo, aspetto (temi, colori, carattere, sfondi), notifiche push, IA (modelli per compito, privacy, spesa del mese con tetto, confronto modelli), integrazioni, registro IA, backup |
 | **Integrazioni** | Server MCP e skill per Claude, API REST con chiavi, webhook firmati |
 
 ## Come funziona l'IA
@@ -59,6 +60,8 @@ npm run dev
 
 Apri <http://localhost:3000> ed entra con `APP_PASSWORD`. Con la memoria vuota, la Home offre **Carica dati di esempio**.
 
+Test automatici: `npm test` (compila `tests/` con `tsc` ed esegue il test runner di Node, con un database in memoria; nessuna dipendenza in più).
+
 > **Progetto su Google Drive:** `npm install` si rompe (TAR_ENTRY_ERROR), Turbopack non riesce a creare i collegamenti e `npx` non funziona per lo spazio nel percorso. Per la build usa `node node_modules/next/dist/bin/next build --webpack`, per i controlli `node node_modules/typescript/bin/tsc --noEmit -p .`.
 
 ### Variabili d'ambiente
@@ -75,12 +78,16 @@ Apri <http://localhost:3000> ed entra con `APP_PASSWORD`. Con la memoria vuota, 
 | `FILES_DIR` | Facoltativo: cartella degli allegati, predefinito `data/files` |
 | `PUSH_CONTACT` | Facoltativo: contatto (mailto: o URL) inviato ai servizi push |
 | `OPENROUTER_URL` | Solo per i test: sostituisce l'indirizzo di OpenRouter con un server finto |
+| `BACKUP_DIR` | Facoltativo: cartella dei backup automatici, predefinito `data/backups` |
+| `SB_BUILD_ID` | Facoltativo: fissa l'id della build (utile per le prove locali con webpack) |
 
 ## Produzione
 
 L'app gira su un VPS Ubuntu con aaPanel: servizio systemd `second-brain` su `127.0.0.1:3100`, dietro nginx con HTTPS (Let's Encrypt). Database e allegati stanno in `data/` sul server; la configurazione in `.env.local`, che il pacchetto di deploy non sovrascrive mai.
 
 Il deploy carica un archivio del progetto (senza `node_modules`, `.next`, `data`, `.env.local`), poi sul server esegue `npm ci && npm run build && systemctl restart second-brain`.
+
+Backup: ogni notte alle 2:30 in `data/backups/` (ultimi 14 giorni, poi una copia a settimana per 8 settimane). Per ripristinare: fermare il servizio, copiare la copia scelta al posto di `data/second-brain.db`, riavviare.
 
 ## Struttura
 
