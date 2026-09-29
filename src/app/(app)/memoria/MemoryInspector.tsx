@@ -120,6 +120,25 @@ export function MemoryInspector({ initial }: { initial: Data }) {
         </Section>
       )}
 
+      {data.habits.length > 0 && (
+        <Section title="Abitudini che ho notato" desc="Cose che fai con regolarità, ricavate da attività ed elementi. Il giorno prima te le ricordo nei suggerimenti." count={data.habits.length}>
+          {data.habits.map((h) => (
+            <div key={h.key} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 4px", borderTop: "1px solid var(--color-divider)" }}>
+              <span className="faint" style={{ display: "flex", marginTop: 3 }}><Icon name="refresh" size={14} /></span>
+              <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontSize: 15 }}>{h.label}</span>
+                <span className="faint" style={{ fontSize: 12, display: "flex", flexWrap: "wrap", columnGap: 6 }}>
+                  <span style={{ color: "var(--accent-text)" }}>{h.rhythm}</span>
+                  <span>· {h.times} volte</span>
+                  <span>· prossima {h.daysToNext === 0 ? "oggi" : h.daysToNext === 1 ? "domani" : `il ${dayLabel(h.next)}`}</span>
+                  {h.recent[0] && <span>· ultima: {h.recent[0].source === "item" ? <Link href={`/conoscenza/${h.recent[0].id}`} style={{ color: "inherit" }}>{h.recent[0].title}</Link> : h.recent[0].title}</span>}
+                </span>
+              </span>
+            </div>
+          ))}
+        </Section>
+      )}
+
       {past.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <button className="link-btn muted" onClick={() => setShowPast((v) => !v)} style={{ alignSelf: "flex-start", fontSize: 13 }}>

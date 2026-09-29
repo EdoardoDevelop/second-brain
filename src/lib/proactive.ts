@@ -9,6 +9,7 @@ import { dueInfo, isoDay } from "./format";
 import { budgetState, callJSON } from "./llm";
 import { log } from "./pipeline";
 import { commandContext } from "./queries";
+import { detectHabits, sameSeries, upcomingDeadlines } from "./habits";
 import { getSetting, setSetting } from "./settings";
 
 /**
@@ -193,14 +194,16 @@ export function changesLine(c: Changes) {
 export async function morningBrief(): Promise<DailyBrief> {
   const today = await TOOL_BY_NAME.get("today")!.run({});
   const changes = await computeChanges();
+  const habitsSoon = (await detectHabits().catch(() => [])).filter((h) => h.daysToNext <= 1)
+    .map((h) => ({ cosa: h.label, quando: h.daysToNext === 0 ? "oggi" : "domani", ritmo: h.cadenceLabel }));
   const empty = isEmpty(changes);
   // Solo i campi con qualcosa, per non far inventare novità all'IA.
   const delta = Object.fromEntries(Object.entries(changes).filter(([k, v]) => k !== "since" && Array.isArray(v) && v.length));
   const out = await callJSON<z.infer<typeof BriefSchema>>({
     tier: "smart", task: "riepilogo_mattino", name: "riepilogo_mattino", maxTokens: 1200,
     messages: [
-      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights." },
-      { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>\n<cambiato>\n${empty ? "Nulla di nuovo." : JSON.stringify(delta)}\n</cambiato>` },
+      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights. Le abitudini in arrivo (cose che l'utente fa di solito oggi o domani) vanno ricordate in highlights." },
+      { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>${habitsSoon.length ? `\n<abitudini_in_arrivo>\n${JSON.stringify(habitsSoon)}\n</abitudini_in_arrivo>` : ""}\n<cambiato>\n${empty ? "Nulla di nuovo." : JSON.stringify(delta)}\n</cambiato>` },
     ],
     jsonSchema: z.toJSONSchema(BriefSchema),
     parse: (v) => BriefSchema.safeParse(v) as { success: true; data: z.infer<typeof BriefSchema> } | { success: false },
@@ -284,12 +287,23 @@ async function signals() {
   // Elementi recenti non ancora collegati a un obiettivo: l'IA può proporre di collegarli (update_item con goalId).
   const unlinked = personalGoals.length ? mem.filter((i) => !aimed.has(i.id) && now - i.createdAt.getTime() < 14 * DAY).slice(0, 15).map((i) => ({ id: i.id, title: i.title, type: i.type, tags: i.tags })) : [];
 
-  return { today, clusters, quiet, stale, overdue, conflicts, week, personalGoals, unlinked, projects: ps.filter((p) => p.status !== "Chiuso").map((p) => ({ id: p.id, name: p.name })) };
+  // Anticipazione: abitudini attese nei prossimi 2 giorni e non ancora in programma, gruppi di scadenze vicine.
+  const seen = new Set<string>(JSON.parse((await getSetting("anticipation_seen")) ?? "[]"));
+  const habits = (await detectHabits().catch(() => []))
+    .filter((h) => h.daysToNext <= 2 && !seen.has(`h:${h.key}:${h.next}`))
+    .filter((h) => !openTasks.some((t) => sameSeries(t.title, h.label) && (!t.due || t.due >= today)))
+    .slice(0, 3)
+    .map((h) => ({ key: `h:${h.key}:${h.next}`, label: h.label, rhythm: h.cadenceLabel, next: h.next, daysToNext: h.daysToNext, dates: h.dates.slice(-6), lastTimes: h.recent }));
+  const deadlines = (await upcomingDeadlines().catch(() => []))
+    .filter((d) => !seen.has(`d:${d.key}:${d.until}`))
+    .map((d) => ({ ...d, seenKey: `d:${d.key}:${d.until}` }));
+
+  return { today, clusters, quiet, stale, overdue, conflicts, week, personalGoals, unlinked, habits, deadlines, projects: ps.filter((p) => p.status !== "Chiuso").map((p) => ({ id: p.id, name: p.name })) };
 }
 
 const InsightSchema = z.object({
   insights: z.array(z.object({
-    kind: z.enum(["project", "follow_up", "stale", "overdue", "conflict", "weekly", "goal", "other"]),
+    kind: z.enum(["project", "follow_up", "stale", "overdue", "conflict", "weekly", "goal", "habit", "plan", "other"]),
     title: z.string().describe("Il suggerimento in una riga, concreto (es. «Tre note sul cantiere non hanno un progetto»)"),
     body: z.string().describe("Una o due frasi: perché conta e cosa proponi"),
     refs: z.array(z.string()).describe("id di elementi, progetti, persone o obiettivi personali citati"),
@@ -319,7 +333,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  */
 function evidence(s: Awaited<ReturnType<typeof signals>>, kind: string, ids: Set<string>): Why[] {
   // Un gruppo di motivi per segnale: quello del tipo di suggerimento va per primo.
-  const by: Record<string, Why[]> = { project: [], follow_up: [], stale: [], overdue: [], conflict: [], weekly: [], goal: [] };
+  const by: Record<string, Why[]> = { project: [], follow_up: [], stale: [], overdue: [], conflict: [], weekly: [], goal: [], habit: [], plan: [] };
   let out = by.project;
   for (const c of s.clusters) {
     if (!c.items.some((i) => ids.has(i.id))) continue;
@@ -354,6 +368,25 @@ function evidence(s: Awaited<ReturnType<typeof signals>>, kind: string, ids: Set
     out.push({ text: `Obiettivo «${g.title}»${when}`, href: `/obiettivi/${g.id}` });
     out.push({ text: `${plural(g.openTasks.length, "attività aperta", "attività aperte")}, ${plural(g.doneTasks, "fatta", "fatte")} · ${plural(g.linkedItems, "elemento collegato", "elementi collegati")}${g.idle ? ` · nessuna novità da ${g.idleDays} giorni` : ""}` });
   }
+  out = by.habit;
+  if (kind === "habit") {
+    // Solo l'abitudine di cui parla il suggerimento (dalle ultime volte citate); se non si capisce, la più vicina.
+    const hs = s.habits.filter((h) => h.lastTimes.some((x) => ids.has(x.id)));
+    for (const h of hs.length ? hs : s.habits.slice(0, 1)) {
+      out.push({ text: `Lo fai ${h.rhythm}: ${h.dates.map(ddmm).join(", ")}` });
+      out.push({ text: `Prossima volta attesa: ${h.daysToNext === 0 ? "oggi" : h.daysToNext === 1 ? "domani" : "dopodomani"} (${ddmm(h.next)})` });
+      const lastItem = h.lastTimes.find((x) => x.source === "item");
+      if (lastItem) out.push({ text: `L'ultima volta: «${lastItem.title}» del ${ddmm(lastItem.date)}`, href: `/conoscenza/${lastItem.id}` });
+    }
+  }
+  out = by.plan;
+  for (const d of s.deadlines) {
+    if (!d.dueSoon.some((t) => ids.has(t.id)) && !d.undated.some((t) => ids.has(t.id)) && !(d.id && ids.has(d.id))) continue;
+    const href = d.kind === "project" ? `/progetti/${d.id}` : d.kind === "aim" ? `/obiettivi/${d.id}` : "/attivita";
+    out.push({ text: `${d.name}: ${plural(d.dueSoon.length, "attività in scadenza", "attività in scadenza")} entro il ${ddmm(d.until)}${d.aimDue ? " (scadenza dell'obiettivo)" : ""}`, href });
+    if (d.undated.length) out.push({ text: `${plural(d.undated.length, "attività senza data", "attività senza data")} nello stesso ${d.kind === "aim" ? "obiettivo" : "progetto"}` });
+    if (d.overdue.length) out.push({ text: `${plural(d.overdue.length, "già scaduta", "già scadute")}: ${d.overdue.slice(0, 2).map((t) => `«${t.title}»`).join(", ")}` });
+  }
   out = by.weekly;
   if (kind === "weekly" && s.week) {
     out.push({ text: `Negli ultimi 7 giorni: ${plural(s.week.captured.length, "elemento nuovo", "elementi nuovi")}, ${plural(s.week.decisions.length, "decisione", "decisioni")}, ${plural(s.week.openTasks, "attività ancora aperta", "attività ancora aperte")}` });
@@ -365,7 +398,7 @@ function evidence(s: Awaited<ReturnType<typeof signals>>, kind: string, ids: Set
 export async function generateInsights(): Promise<number> {
   const s = await signals();
   const goalSignals = s.personalGoals.some((g) => g.dueSoon || g.idle || g.noNextStep) || s.unlinked.length > 0;
-  const empty = !s.clusters.length && !s.quiet.length && !s.stale.length && !s.overdue.length && !s.conflicts.length && !s.week && !goalSignals;
+  const empty = !s.clusters.length && !s.quiet.length && !s.stale.length && !s.overdue.length && !s.conflicts.length && !s.week && !goalSignals && !s.habits.length && !s.deadlines.length;
   // Le proposte della cura notturna della memoria («cleanup») restano finché non si decidono.
   await db.update(insights).set({ status: "dismissed" }).where(and(eq(insights.status, "new"), ne(insights.kind, "cleanup")));
   if (empty) { await log("Suggerimenti", null, "Nessun segnale"); return 0; }
@@ -377,6 +410,7 @@ export async function generateInsights(): Promise<number> {
         role: "system",
         content: `Sei il Second Brain dell'utente e oggi proponi al massimo 4 suggerimenti utili, in italiano, a partire dai segnali calcolati sui suoi dati.
 Tipi: project (note senza progetto con un tema comune: proponi create_project, poi update_item per assegnarle), follow_up (persona non sentita da tempo con cose in sospeso: proponi add_task "Sentire …"), stale (progetto fermo: proponi il prossimo passo come add_task), overdue (attività scadute da giorni: proponi set_task_due o complete_task), conflict (informazioni in conflitto da chiarire), weekly (il lunedì, bilancio della settimana in 2-3 frasi, senza azioni), goal (obiettivo personale in scadenza, fermo o senza un prossimo passo: proponi add_task con goalId; oppure elementi di unlinked che servono a un obiettivo: proponi update_item con goalId).
+habit (una cosa che l'utente fa con regolarità e che arriva oggi, domani o dopodomani, vedi habits: proponi add_task per prepararla con due il giorno prima o il giorno stesso, e nel body di' cosa preparare o ritrovare partendo dalle ultime volte in lastTimes, citandole in refs), plan (più attività in scadenza ravvicinata nello stesso progetto o obiettivo, vedi deadlines: proponi set_task_due per dare una data alle attività senza data prima della scadenza, distribuendole nei giorni e mettendo prima le più importanti, ed eventualmente add_task per un passo che manca; nel body il piano giorno per giorno in 2-4 righe).
 Gli obiettivi personali (personalGoals) sono ciò che conta di più per l'utente: se un suggerimento di qualsiasi tipo è rilevante per uno di essi, dillo nel body («Rilevante per il tuo obiettivo …») e metti il suo id in refs.
 Scegli solo ciò che è davvero utile; meglio pochi suggerimenti buoni. Usa solo gli id presenti nei segnali. Le azioni verranno confermate dall'utente: compila solo i campi che servono, gli altri null.`,
       },
@@ -400,11 +434,16 @@ Scegli solo ciò che è davvero utile; meglio pochi suggerimenti buoni. Usa solo
   for (const ins of out.insights.slice(0, 4)) {
     const actions = cleanActions(ins.actions, ctx);
     const refs = [...new Set(ins.refs)].filter((id) => titles.has(id)).slice(0, 6).map((id) => ({ id, title: titles.get(id)![0], href: titles.get(id)![1] }));
-    const kind = ["project", "follow_up", "stale", "overdue", "conflict", "weekly", "goal"].includes(ins.kind) ? ins.kind : "other";
+    const kind = ["project", "follow_up", "stale", "overdue", "conflict", "weekly", "goal", "habit", "plan"].includes(ins.kind) ? ins.kind : "other";
     const touched = new Set([...ins.refs, ...actions.flatMap((a) => [a.itemId, a.targetId, a.taskId, a.projectId, a.personId, a.goalId]).filter((x): x is string => !!x)]);
     const why = evidence(s, kind, touched);
     await db.insert(insights).values({ id: newId("in"), day, kind, title: ins.title.slice(0, 140), body: ins.body.slice(0, 500), actions, refs, why, status: "new", createdAt: new Date() });
     n++;
+  }
+  const shown = [...s.habits.map((h) => h.key), ...s.deadlines.map((d) => d.seenKey)];
+  if (shown.length) {
+    const prev: string[] = JSON.parse((await getSetting("anticipation_seen")) ?? "[]");
+    await setSetting("anticipation_seen", JSON.stringify([...new Set([...prev, ...shown])].slice(-300)));
   }
   await log("Suggerimenti", null, `${n} proposti`);
   return n;

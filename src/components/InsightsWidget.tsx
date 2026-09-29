@@ -19,6 +19,8 @@ const KIND: Record<string, [string, IconName]> = {
   conflict: ["Da chiarire", "link"],
   weekly: ["La tua settimana", "calendar"],
   goal: ["Il tuo obiettivo", "target"],
+  habit: ["Di solito lo fai", "refresh"],
+  plan: ["Un piano per i prossimi giorni", "calendar"],
   cleanup: ["Da riordinare", "archive"],
   other: ["Suggerimento", "ai"],
 };

@@ -8,7 +8,7 @@ Web app per un solo utente, usata da computer e telefono (installabile come app)
 
 | Area | Cosa c'è |
 |---|---|
-| **Home** | Riepilogo del mattino scritto dall'IA, suggerimenti dell'IA con azioni da confermare, meteo, notizie per te, catture, attività, agenda, progetti, obiettivi, persone, preferiti, conversazioni. Riquadri riordinabili e ridimensionabili |
+| **Home** | Riepilogo del mattino scritto dall'IA (con cosa è cambiato da ieri e le abitudini in arrivo), suggerimenti dell'IA con azioni da confermare (anche in anticipo: «di solito lo fai» il giorno prima di un'abitudine, piani per le scadenze ravvicinate), meteo, notizie per te, catture, attività, agenda, progetti, obiettivi, persone, preferiti, conversazioni. Riquadri riordinabili e ridimensionabili |
 | **Inbox** | Cattura di testo, link, file (foto, PDF, audio) e registrazioni; condivisione dal telefono (Android); proposta dell'IA modificabile (tipo, titolo, sintesi, persone, progetto, tag, collegamenti e conflitti, attività) da confermare |
 | **Conoscenza** | Ricerca, viste, filtri, preferiti; dettaglio con contenuto modificabile, allegati (popup immagini, lettore PDF integrato), azioni IA, collegamenti, esporta in Markdown, «Chiedi all'IA su questo» |
 | **Assistente** | Domande e comandi, scritti o a voce. L'IA lavora a passi (cerca, apre, confronta), risponde con citazioni cliccabili, suggerisce domande successive, propone azioni e fatti da ricordare che confermi tu. Per le domande sul perché («perché X è fermo?») segue in un passo solo i collegamenti tra progetto, attività, persone, riunioni e documenti. «Pensa meglio» usa un modello più potente; «Salva in memoria» manda la risposta in Inbox |

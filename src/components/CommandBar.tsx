@@ -259,7 +259,7 @@ export function ActionCard({ a, names, onChange }: { a: CommandAction & { on: bo
         {(a.kind === "add_task" || a.kind === "add_goal" || a.kind === "create_project") && <input {...input} value={a.title ?? ""} onChange={(e) => onChange({ title: e.target.value })} />}
         {a.kind === "upsert_person" && <input {...input} value={a.name ?? (a.personId ? names[a.personId] : "") ?? ""} onChange={(e) => onChange({ name: e.target.value })} placeholder="Nome" />}
         {(a.kind === "add_task" || a.kind === "set_task_due") && (
-          <label className="muted" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+          <label className="muted" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, fontSize: 13, minWidth: 0 }}>
             Scadenza
             <input {...input} type="date" value={a.due ?? ""} onChange={(e) => onChange({ due: e.target.value || null })} style={{ ...input.style, width: 160 }} />
             {a.kind === "add_task" && <input {...input} type="time" value={a.time ?? ""} onChange={(e) => onChange({ time: e.target.value || null, remind: e.target.value ? (a.remind ?? 0) : null })} style={{ ...input.style, width: 110 }} aria-label="Orario" />}

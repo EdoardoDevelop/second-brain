@@ -26,6 +26,7 @@ import { removeFiles } from "./files";
 import { deleteAimRows, executeActions } from "./commands";
 import { buildOverview, forgetOverview, type Overview } from "./overview";
 import { closeFactQuestion, todayFactQuestion } from "./fact-question";
+import { detectHabits } from "./habits";
 import { deliver, emit, WEBHOOK_EVENTS } from "./webhooks";
 import { createApiKey } from "./api-keys";
 import { randomBytes } from "node:crypto";
@@ -687,12 +688,13 @@ export async function inspectorData() {
       for (const c of await categorizeFacts(pending)) await db.update(facts).set({ category: c.category }).where(eq(facts.id, c.id));
     } catch { /* restano «da classificare» */ }
   }
-  const [list, pp, question] = await Promise.all([
+  const [list, pp, question, habits] = await Promise.all([
     listFacts(),
     db.select({ id: people.id, name: people.name, role: people.role, org: people.org, note: people.note }).from(people).orderBy(people.name),
     todayFactQuestion(),
+    detectHabits().catch(() => []),
   ]);
-  return { facts: list, people: pp, question };
+  return { facts: list, people: pp, question, habits: habits.map((h) => ({ key: h.key, label: h.label, rhythm: h.cadenceLabel, next: h.next, daysToNext: h.daysToNext, times: h.dates.length, recent: h.recent })) };
 }
 
 /** Risposta alla domanda del giorno «È ancora vero che…?»: sì = riconferma, no = non più vero, later = niente. */
