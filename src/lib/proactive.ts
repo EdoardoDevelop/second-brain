@@ -38,7 +38,7 @@ export async function getDailyBrief(): Promise<DailyBrief | null> {
 const BriefSchema = z.object({
   title: z.string().describe("Saluto e sintesi della giornata in una riga, massimo 60 caratteri (es. «Buongiorno! Due scadenze e una riunione»)"),
   body: z.string().describe("Una o due frasi per la notifica: le cose più importanti di oggi"),
-  highlights: z.array(z.string()).describe("2-5 punti brevi e concreti: cosa fare oggi, cosa scade, cosa aspetta in Inbox, eventuali attenzioni"),
+  highlights: z.array(z.string()).describe("0-5 punti brevi e concreti su oggi: cosa scade o è scaduto, cosa aspetta in Inbox, abitudini in arrivo, eventuali attenzioni. Gli obiettivi aperti senza data non sono cose da fare oggi. Mai cose che l'utente fa in un altro giorno della settimana"),
   changes: z.array(z.string()).describe("Cosa è cambiato dall'ultimo riepilogo, in 1-4 righe brevi, usando SOLO <cambiato>: raggruppa (es. «3 note nuove su Progetto Alpha, 2 senza progetto»), cita nomi e titoli solo se pochi. Non ripetere i punti di highlights. Vuoto se non è cambiato nulla."),
 });
 
@@ -191,6 +191,17 @@ export function changesLine(c: Changes) {
   return chips.length ? `${sinceLabel(c.since)}: ${chips.map((x) => x.label).join(", ")}` : "";
 }
 
+/**
+ * Fatti confermati e validi oggi, da mettere accanto ai dati del giorno: in fondo al prompt di sistema
+ * il modello tendeva a ignorarli (es. «fa i lavori di casa il sabato»).
+ */
+async function currentFacts(): Promise<string[]> {
+  const day = isoDay();
+  return (await db.select({ text: facts.text, validFrom: facts.validFrom, validUntil: facts.validUntil }).from(facts).where(eq(facts.status, "confirmed")))
+    .filter((f) => (!f.validFrom || f.validFrom <= day) && (!f.validUntil || f.validUntil >= day)).map((f) => f.text).slice(0, 60);
+}
+const factsBlock = (fs: string[]) => fs.length ? `\n<cosa_so_dell_utente>\n${fs.map((t) => "- " + t).join("\n")}\n</cosa_so_dell_utente>` : "";
+
 /** Riepilogo del mattino scritto dall'IA (salvato in settings.daily_brief e mostrato nella Home). */
 export async function morningBrief(): Promise<DailyBrief> {
   const today = await TOOL_BY_NAME.get("today")!.run({});
@@ -199,13 +210,14 @@ export async function morningBrief(): Promise<DailyBrief> {
   const habitsSoon = (await detectHabits().catch(() => [])).filter((h) => h.daysToNext <= 1)
     .map((h) => ({ cosa: h.label, quando: h.daysToNext === 0 ? "oggi" : "domani", ritmo: h.cadenceLabel }));
   const empty = isEmpty(changes);
+  const current = await currentFacts();
   // Solo i campi con qualcosa, per non far inventare novità all'IA.
   const delta = Object.fromEntries(Object.entries(changes).filter(([k, v]) => k !== "since" && Array.isArray(v) && v.length));
   const out = await callJSON<z.infer<typeof BriefSchema>>({
     tier: "smart", task: "riepilogo_mattino", name: "riepilogo_mattino", maxTokens: 1200,
     messages: [
-      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights. Le abitudini in arrivo (cose che l'utente fa di solito oggi o domani) vanno ricordate in highlights. Guarda il giorno della settimana: se i fatti confermati dicono che certe cose l'utente le fa in un altro giorno (es. i lavori di casa il sabato), non metterle tra le cose di oggi. Se c'è il racconto di ieri sera, puoi riprenderlo con naturalezza (es. «ieri mi hai detto che…») quando è utile per oggi." },
-      { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>${habitsSoon.length ? `\n<abitudini_in_arrivo>\n${JSON.stringify(habitsSoon)}\n</abitudini_in_arrivo>` : ""}${diary ? `\n<ieri_sera_mi_ha_raccontato>\n${diary}\n</ieri_sera_mi_ha_raccontato>` : ""}\n<cambiato>\n${empty ? "Nulla di nuovo." : JSON.stringify(delta)}\n</cambiato>` },
+      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights. Le abitudini in arrivo (cose che l'utente fa di solito oggi o domani) vanno ricordate in highlights. Gli obiettivi aperti senza data (openGoals) non sono cose da fare oggi: citali solo se oggi è il giorno giusto per quel lavoro. Prima di scrivere, leggi <cosa_so_dell_utente> e il giorno della settimana: se l'utente fa certe cose in un altro giorno (es. i lavori di casa il sabato), non metterle né nel titolo né in highlights né nel body; al più un accenno («sabato: casa») se il giorno è vicino. Se c'è il racconto di ieri sera, puoi riprenderlo con naturalezza (es. «ieri mi hai detto che…») quando è utile per oggi." },
+      { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>${factsBlock(current)}${habitsSoon.length ? `\n<abitudini_in_arrivo>\n${JSON.stringify(habitsSoon)}\n</abitudini_in_arrivo>` : ""}${diary ? `\n<ieri_sera_mi_ha_raccontato>\n${diary}\n</ieri_sera_mi_ha_raccontato>` : ""}\n<cambiato>\n${empty ? "Nulla di nuovo." : JSON.stringify(delta)}\n</cambiato>` },
     ],
     jsonSchema: z.toJSONSchema(BriefSchema),
     parse: (v) => BriefSchema.safeParse(v) as { success: true; data: z.infer<typeof BriefSchema> } | { success: false },
@@ -414,11 +426,11 @@ export async function generateInsights(): Promise<number> {
         content: `Sei il Second Brain dell'utente e oggi proponi al massimo 4 suggerimenti utili, in italiano, a partire dai segnali calcolati sui suoi dati.
 Tipi: project (note senza progetto con un tema comune: proponi create_project, poi update_item per assegnarle), follow_up (persona non sentita da tempo con cose in sospeso: proponi add_task "Sentire …"), stale (progetto fermo: proponi il prossimo passo come add_task), overdue (attività scadute da giorni: proponi set_task_due o complete_task), conflict (informazioni in conflitto da chiarire), weekly (il lunedì, bilancio della settimana in 2-3 frasi, senza azioni), goal (obiettivo personale in scadenza, fermo o senza un prossimo passo: proponi add_task con goalId; oppure elementi di unlinked che servono a un obiettivo: proponi update_item con goalId).
 habit (una cosa che l'utente fa con regolarità e che arriva oggi, domani o dopodomani, vedi habits: proponi add_task per prepararla con due il giorno prima o il giorno stesso, e nel body di' cosa preparare o ritrovare partendo dalle ultime volte in lastTimes, citandole in refs), plan (più attività in scadenza ravvicinata nello stesso progetto o obiettivo, vedi deadlines: proponi set_task_due per dare una data alle attività senza data prima della scadenza, distribuendole nei giorni e mettendo prima le più importanti, ed eventualmente add_task per un passo che manca; nel body il piano giorno per giorno in 2-4 righe).
-Oggi è ${s.weekday} ${s.today}. Rispetta ciò che i fatti confermati dicono su quando l'utente fa le cose (giorni, orari, abitudini: es. «i lavori di casa li faccio il sabato»): non proporre per oggi cose che fa in un altro giorno; se serve, proponi set_task_due per il prossimo giorno giusto, altrimenti lasciale stare.
+Oggi è ${s.weekday} ${s.today}. Rispetta ciò che i fatti in <cosa_so_dell_utente> dicono su quando l'utente fa le cose (giorni, orari, abitudini: es. «i lavori di casa li faccio il sabato»): non proporre per oggi cose che fa in un altro giorno; se serve, proponi set_task_due per il prossimo giorno giusto, altrimenti lasciale stare.
 Gli obiettivi personali (personalGoals) sono ciò che conta di più per l'utente: se un suggerimento di qualsiasi tipo è rilevante per uno di essi, dillo nel body («Rilevante per il tuo obiettivo …») e metti il suo id in refs.
 Scegli solo ciò che è davvero utile; meglio pochi suggerimenti buoni. Usa solo gli id presenti nei segnali. Le azioni verranno confermate dall'utente: compila solo i campi che servono, gli altri null.`,
       },
-      { role: "user", content: `<segnali>\n${JSON.stringify(s)}\n</segnali>` },
+      { role: "user", content: `<segnali>\n${JSON.stringify(s)}\n</segnali>${factsBlock(await currentFacts())}` },
     ],
     jsonSchema: z.toJSONSchema(InsightSchema),
     parse: (v) => InsightLoose.safeParse(v) as { success: true; data: z.infer<typeof InsightLoose> } | { success: false },
