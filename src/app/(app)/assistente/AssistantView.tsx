@@ -10,7 +10,7 @@ import { CommandHelpButton } from "@/components/CommandHelp";
 import { VoiceSheet } from "@/components/VoiceStage";
 import { useRecorder } from "@/components/useRecorder";
 import { addFact, deleteChat, listChats, loadChat, runCommand, saveAnswer, saveChat, setVoiceReplies, transcribeAudio } from "@/lib/actions";
-import { speak, speechSupported, stopSpeaking, useSpeaking } from "@/lib/speech";
+import { configureSpeech, speak, speechSupported, stopSpeaking, useSpeaking, useSpeechError, type SpeechEngine } from "@/lib/speech";
 import { shortDate } from "@/lib/format";
 import type { ChatTurn } from "@/lib/ai";
 import { answerText, type AskEvent, type Card, type ChatAnswer, type ChatMsg, type ChatSummary, type FactCard, type LegacyAnswer, type Reply } from "@/lib/chat";
@@ -46,10 +46,12 @@ const relTime = (ms: number) => {
   return shortDate(new Date(ms));
 };
 
-export function AssistantView({ scopes, initialScope, initialQuestion, initialChat, enabled, name, focus, voiceReplies }: {
+export function AssistantView({ scopes, initialScope, initialQuestion, initialChat, enabled, name, focus, voiceReplies, voiceEngine }: {
   scopes: Scopes; initialScope: string; initialQuestion: string; initialChat: string | null; enabled: boolean; name: string;
   /** Risposte lette ad alta voce: l'ultima scelta dell'utente, salvata sul server. */
   voiceReplies: boolean;
+  /** Voce del dispositivo o voce IA (Impostazioni → Voce). */
+  voiceEngine: SpeechEngine;
   /** Pagina da cui arriva la domanda (item:<id>, project:<id>, person:<id>). */
   focus?: string;
 }) {
@@ -76,7 +78,11 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
   const [canSpeak, setCanSpeak] = useState(false);
+  const engineKey = voiceEngine.kind === "ai" ? "ai:" + voiceEngine.voice : "device";
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { configureSpeech(voiceEngine); }, [engineKey]);
   useEffect(() => { setCanSpeak(speechSupported()); return () => stopSpeaking(); }, []);
+  const speechError = useSpeechError();
   const toggleVoice = () => {
     const on = !voice;
     setVoice(on);
@@ -363,6 +369,7 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
               ),
             )}
 
+            {speechError && <div className="muted" style={{ fontSize: 13, display: "flex", gap: 8, alignItems: "center" }}><Icon name="alert" size={14} />Voce IA non disponibile ({speechError}): leggo con la voce del dispositivo.</div>}
             {transcribing && <div className="muted" style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 14 }}><span className="spin" />Trascrivo la registrazione…</div>}
           </div>
         </div>

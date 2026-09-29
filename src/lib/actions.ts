@@ -10,7 +10,7 @@ import { aiEnabled, categorizeFacts, classify, contextNames, quickCommand, trans
 import { endSession, requireAuth } from "./auth";
 import { commandContext, memoryContext } from "./queries";
 import { isoDay, reminderFields } from "./format";
-import { getAiConfig, getProfile, getSetting, isOpenRouterKey, setSetting, type AiModels, type AiPrivacy } from "./settings";
+import { AI_VOICES, getAiConfig, getProfile, getSetting, isOpenRouterKey, setSetting, type AiModels, type AiPrivacy } from "./settings";
 import { writeBrief } from "./ai";
 import { briefData } from "./queries";
 import { runAgent } from "./agent";
@@ -1218,4 +1218,10 @@ export async function loadDemoData() {
 export async function setVoiceReplies(on: boolean) {
   await guard();
   await setSetting("voice_replies", on ? "1" : "0");
+}
+
+export async function saveVoicePrefs(p: { engine: "device" | "ai"; aiVoice: string }) {
+  await guard();
+  await setSetting("voice_engine", p.engine === "ai" ? "ai" : "device");
+  if (AI_VOICES.some(([v]) => v === p.aiVoice)) await setSetting("voice_ai_voice", p.aiVoice);
 }

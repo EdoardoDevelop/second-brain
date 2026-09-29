@@ -92,7 +92,7 @@ const PRIVACY: [Privacy, string, string][] = [
 
 const TASK_LABEL: Record<string, string> = {
   assistente: "Assistente", comando: "Comandi", proposta: "Classificazione", lettura_file: "Lettura file", trascrizione: "Trascrizioni",
-  sintesi: "Sintesi progetti e persone", azione: "Azioni sugli elementi", riepilogo_mattino: "Riepilogo del mattino", suggerimenti: "Suggerimenti",
+  sintesi: "Sintesi progetti e persone", azione: "Azioni sugli elementi", riepilogo_mattino: "Riepilogo del mattino", suggerimenti: "Suggerimenti", voce: "Voce IA",
   argomenti_notizie: "Notizie · argomenti", notizie_per_te: "Notizie · scelta", indicizzazione: "Indice per significato", ricerca: "Ricerca per significato",
   confronto: "Confronto modelli", risposta: "Risposte", cura_memoria: "Cura della memoria",
 };

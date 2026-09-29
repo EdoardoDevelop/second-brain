@@ -101,3 +101,21 @@ export async function getSetting(key: string): Promise<string | null> {
 export async function getProfile(): Promise<Profile> {
   return parseProfile(await getSetting("profile"));
 }
+
+// ——— Voce delle risposte ———
+
+/** device = sintesi vocale del dispositivo (gratis, resta sul telefono) · ai = voce IA via OpenRouter (a consumo). */
+export type VoiceEngine = "device" | "ai";
+export type VoicePrefs = { engine: VoiceEngine; aiVoice: string };
+export const VOICE_MODEL = "openai/gpt-audio-mini";
+/** Voci del modello audio di OpenAI, con una descrizione per sceglierle. */
+export const AI_VOICES: [string, string][] = [
+  ["coral", "Coral · femminile, calda"], ["shimmer", "Shimmer · femminile, luminosa"], ["sage", "Sage · femminile, pacata"],
+  ["marin", "Marin · femminile, naturale"], ["alloy", "Alloy · neutra"], ["ballad", "Ballad · maschile, morbida"],
+  ["ash", "Ash · maschile, decisa"], ["echo", "Echo · maschile, chiara"], ["verse", "Verse · maschile, espressiva"], ["cedar", "Cedar · maschile, naturale"],
+];
+
+export async function getVoicePrefs(): Promise<VoicePrefs> {
+  const [engine, voice] = await Promise.all([getSetting("voice_engine"), getSetting("voice_ai_voice")]);
+  return { engine: engine === "ai" ? "ai" : "device", aiVoice: AI_VOICES.some(([v]) => v === voice) ? voice! : "coral" };
+}

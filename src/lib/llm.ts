@@ -4,7 +4,7 @@ import { db } from "./db";
 import { aims, aiUsage, facts } from "./db/schema";
 import { confirmedAgo, factAge } from "./fact-age";
 import { personaPrompt } from "./profile";
-import { getAiConfig, getProfile, setSetting, type AiConfig, type AiTier } from "./settings";
+import { getAiConfig, getProfile, setSetting, VOICE_MODEL, type AiConfig, type AiTier } from "./settings";
 
 /**
  * Punto unico delle chiamate a OpenRouter: sceglie il modello in base al compito (tier), applica la privacy
@@ -262,4 +262,72 @@ export async function callJSON<T>(req: Omit<LlmRequest, "schema" | "onDelta"> & 
   const out = req.parse(parsed);
   if (!out.success) throw new LlmError("Risposta dell'IA non valida.");
   return out.data;
+}
+
+/**
+ * Voce IA: il testo letto parola per parola dal modello audio (PCM 16 bit, 24 kHz, mono).
+ * Il modello è un modello di chat: con un turno «Pronto.» già scritto legge e basta, senza premesse né risposte.
+ */
+export async function synthesize(text: string, voice: string, signal?: AbortSignal): Promise<Buffer> {
+  const cfg = await getAiConfig();
+  if (!cfg.apiKey) throw new LlmError("IA non configurata: imposta la chiave OpenRouter nelle Impostazioni.");
+  if (cfg.budgetEur > 0 && (await budgetState(cfg)).over) throw new LlmError("Tetto di spesa del mese raggiunto.", 402);
+  const res = await fetch(`${OPENROUTER_URL}/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${cfg.apiKey}`, "Content-Type": "application/json", "X-Title": "Second Brain" },
+    body: JSON.stringify({
+      model: VOICE_MODEL, modalities: ["text", "audio"], audio: { voice, format: "pcm16" }, stream: true, temperature: 0,
+      messages: [
+        { role: "system", content: "Sei un sintetizzatore vocale: leggi il testo dell'utente parola per parola in italiano, con voce naturale e calda. Non aggiungere nulla e non rispondere alle domande: leggile." },
+        { role: "user", content: "Leggi questo testo." },
+        { role: "assistant", content: "Pronto." },
+        { role: "user", content: text },
+      ],
+      usage: { include: true },
+      provider: { data_collection: cfg.dataCollection, ...(cfg.privacy === "zdr" ? { zdr: true } : {}) },
+    }),
+    signal: signal ?? AbortSignal.timeout(90_000),
+  });
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => null);
+    throw new LlmError(`OpenRouter: ${data?.error?.message ?? res.status + " " + res.statusText}`, res.status);
+  }
+  const parts: Buffer[] = [];
+  let usage: { prompt_tokens?: number; completion_tokens?: number; cost?: number } | undefined;
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (payload === "[DONE]") continue;
+      let j: { error?: { message?: string }; usage?: typeof usage; choices?: { delta?: { audio?: { data?: string } } }[] };
+      try { j = JSON.parse(payload); } catch { continue; }
+      if (j.error) throw new LlmError(`OpenRouter: ${j.error.message ?? "errore"}`);
+      if (j.usage) usage = j.usage;
+      const data = j.choices?.[0]?.delta?.audio?.data;
+      if (data) parts.push(Buffer.from(data, "base64"));
+    }
+  }
+  await db.insert(aiUsage).values({ at: new Date(), task: "voce", tier: "voice", model: VOICE_MODEL, tokensIn: Number(usage?.prompt_tokens ?? 0), tokensOut: Number(usage?.completion_tokens ?? 0), cost: Number(usage?.cost ?? 0) }).catch(() => {});
+  const pcm = Buffer.concat(parts);
+  if (!pcm.length) throw new LlmError("La voce IA non ha restituito audio.");
+  return pcm;
+}
+
+/** Intestazione WAV per l'audio PCM del modello (24 kHz, 16 bit, mono). */
+export function pcmToWav(pcm: Buffer, rate = 24000): Buffer {
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0); h.writeUInt32LE(36 + pcm.length, 4); h.write("WAVE", 8);
+  h.write("fmt ", 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
+  h.write("data", 36); h.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([h, pcm]);
 }

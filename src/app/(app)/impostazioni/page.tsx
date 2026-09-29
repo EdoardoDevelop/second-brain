@@ -11,7 +11,8 @@ import Link from "next/link";
 import { SetCard, SettingsShell, type SettingsSection } from "./SettingsShell";
 import { IntegrationsSettings } from "./IntegrationsSettings";
 import { clock, shortDate } from "@/lib/format";
-import { DEFAULT_MODEL, DEFAULT_MODELS, getAiConfig, getLook, getProfile, maskKey } from "@/lib/settings";
+import { AI_VOICES, DEFAULT_MODEL, DEFAULT_MODELS, getAiConfig, getLook, getProfile, getVoicePrefs, maskKey } from "@/lib/settings";
+import { VoiceSettings } from "./VoiceSettings";
 import { parseMode } from "@/lib/theme";
 import { DeleteAll, DensitySwitch, ImportBackup, LookEditor, ThemeSwitch } from "./SettingsClient";
 import { AiSettings } from "./AiSettings";
@@ -24,7 +25,7 @@ export default async function SettingsPage() {
   const jar = await cookies();
   const theme = parseMode(jar.get("sb_theme")?.value);
   const density = jar.get("sb_density")?.value === "compact" ? "compact" : "comfortable";
-  const [look, cfg, log, nItems, nProjects, nPeople, nTasks, notify, subs, bgs, profile, keys, hooks, bkStatus, bkList, checkinPrefs] = await Promise.all([
+  const [look, cfg, log, nItems, nProjects, nPeople, nTasks, notify, subs, bgs, profile, keys, hooks, bkStatus, bkList, checkinPrefs, voicePrefs] = await Promise.all([
     getLook(),
     getAiConfig(),
     db.select({ id: aiLog.id, at: aiLog.at, action: aiLog.action, outcome: aiLog.outcome, title: items.title, itemId: aiLog.itemId })
@@ -42,6 +43,7 @@ export default async function SettingsPage() {
     backupStatus(),
     listBackups(),
     getCheckinPrefs(),
+    getVoicePrefs(),
   ]);
   // Indirizzo pubblico dell'app (dietro nginx arriva negli header inoltrati).
   const h = await headers();
@@ -103,6 +105,15 @@ export default async function SettingsPage() {
           privacy={cfg.privacy}
           budgetEur={cfg.budgetEur}
         />
+      ),
+    },
+    {
+      id: "voce", title: "Voce", icon: "volume",
+      desc: "Come l'Assistente legge ad alta voce le risposte.",
+      content: (
+        <SetCard title="Voce delle risposte" icon="volume">
+          <VoiceSettings initial={voicePrefs} voices={AI_VOICES} aiEnabled={!!cfg.apiKey} />
+        </SetCard>
       ),
     },
     {

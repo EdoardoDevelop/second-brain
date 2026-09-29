@@ -3,15 +3,27 @@
 import { useEffect, useState } from "react";
 
 /**
- * Lettura ad alta voce con la sintesi vocale del dispositivo (Web Speech API): gratis e senza inviare il testo a nessuno.
+ * Lettura ad alta voce. Due motori, scelti nelle Impostazioni:
+ * - device: sintesi vocale del dispositivo (Web Speech API), gratis e senza inviare il testo a nessuno;
+ * - ai: voce IA via /api/speak (OpenRouter), a pezzi: il pezzo dopo si chiede mentre suona quello prima.
  * Un solo testo alla volta; `key` dice quale (per il pulsante play/stop del messaggio giusto).
  */
 
+export type SpeechEngine = { kind: "device" } | { kind: "ai"; voice: string };
+let engine: SpeechEngine = { kind: "device" };
+export const configureSpeech = (e: SpeechEngine) => { engine = e; };
+
 let current: string | null = null;
+/** Cresce a ogni nuova lettura o stop: le letture vecchie in corso se ne accorgono e si fermano. */
+let epoch = 0;
+let audio: HTMLAudioElement | null = null;
+/** Audio IA già scaricati (voce + testo), per riascoltare senza pagare di nuovo. */
+const cache = new Map<string, Promise<string>>();
 const listeners = new Set<(k: string | null) => void>();
 const setCurrent = (k: string | null) => { current = k; listeners.forEach((l) => l(k)); };
 
-export const speechSupported = () => typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+const deviceSpeech = () => typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+export const speechSupported = () => typeof window !== "undefined" && (deviceSpeech() || typeof Audio !== "undefined");
 
 /** Toglie ciò che non va letto: citazioni ⟦id⟧, grassetti, trattini degli elenchi, indirizzi, marcatori [[…]]. */
 export function speechText(s: string) {
@@ -30,7 +42,7 @@ export function speechText(s: string) {
 }
 
 /** Pezzi brevi: Chrome interrompe le frasi lunghe dopo circa 15 secondi. */
-function chunks(s: string, max = 220): string[] {
+export function chunks(s: string, max = 220): string[] {
   const out: string[] = [];
   let cur = "";
   for (const part of s.split(/(?<=[.!?;:])\s+/)) {
@@ -54,16 +66,84 @@ function italianVoice(): SpeechSynthesisVoice | null {
 }
 
 export function stopSpeaking() {
-  if (!speechSupported()) return;
-  window.speechSynthesis.cancel();
+  epoch++;
+  if (audio) { audio.pause(); audio = null; }
+  if (deviceSpeech()) window.speechSynthesis.cancel();
   setCurrent(null);
 }
 
-export function speak(key: string, text: string) {
-  if (!speechSupported()) return;
+/** Legge `text`; `withEngine` forza un motore (la prova nelle Impostazioni). */
+export function speak(key: string, text: string, withEngine?: SpeechEngine) {
+  stopSpeaking();
+  const e = withEngine ?? engine;
+  if (e.kind === "ai") { void speakAi(key, text, e.voice, ++epoch); return; }
+  speakDevice(key, chunks(speechText(text)));
+}
+
+function fetchAudio(voice: string, text: string): Promise<string> {
+  const k = voice + "|" + text;
+  let p = cache.get(k);
+  if (!p) {
+    p = fetch("/api/speak", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, voice }) })
+      .then(async (r) => {
+        if (!r.ok) throw new Error((await r.json().catch(() => null))?.error ?? `Errore ${r.status}`);
+        return URL.createObjectURL(await r.blob());
+      });
+    p.catch(() => cache.delete(k));
+    cache.set(k, p);
+    // Tetto alla cache: gli audio più vecchi si liberano.
+    if (cache.size > 60) { const [old] = cache.keys(); cache.get(old)!.then(URL.revokeObjectURL, () => {}); cache.delete(old); }
+  }
+  return p;
+}
+
+async function speakAi(key: string, text: string, voice: string, my: number) {
+  // Il primo pezzo corto, così la voce parte presto; poi pezzi lunghi: meno richieste, voce più continua.
+  const t = speechText(text);
+  const first = chunks(t, 180)[0] ?? "";
+  const parts = first ? [first, ...chunks(t.slice(first.length).trim(), 450)] : [];
+  if (!parts.length) return;
+  setCurrent(key);
+  for (let i = 0; i < parts.length; i++) {
+    let url: string;
+    try {
+      const p = fetchAudio(voice, parts[i]);
+      if (i + 1 < parts.length) fetchAudio(voice, parts[i + 1]).catch(() => {});
+      url = await p;
+    } catch (err) {
+      // Voce IA non disponibile (rete, tetto di spesa…): il resto con la voce del dispositivo.
+      if (my !== epoch) return;
+      const msg = err instanceof Error ? err.message : "Voce IA non disponibile.";
+      errorListeners.forEach((l) => l(msg));
+      if (deviceSpeech()) speakDevice(key, parts.slice(i).flatMap((x) => chunks(x)));
+      else setCurrent(null);
+      return;
+    }
+    if (my !== epoch) return;
+    const ok = await new Promise<boolean>((resolve) => {
+      const a = new Audio(url);
+      audio = a;
+      a.onended = () => resolve(true);
+      a.onerror = () => resolve(false);
+      a.play().catch(() => resolve(false));
+    });
+    if (my !== epoch) return;
+    if (!ok) break;
+  }
+  if (my === epoch) { audio = null; setCurrent(null); }
+}
+
+const errorListeners = new Set<(e: string | null) => void>();
+/** L'ultimo errore della voce IA (per avvisare che si è passati alla voce del dispositivo). */
+export function useSpeechError() {
+  const [e, setE] = useState<string | null>(null);
+  useEffect(() => { errorListeners.add(setE); return () => { errorListeners.delete(setE); }; }, []);
+  return e;
+}
+
+function speakDevice(key: string, parts: string[]) {
+  if (!deviceSpeech()) return;
   const synth = window.speechSynthesis;
-  synth.cancel();
-  const parts = chunks(speechText(text));
   if (!parts.length) { setCurrent(null); return; }
   const voice = italianVoice();
   setCurrent(key);
@@ -83,7 +163,7 @@ export function useSpeaking() {
   useEffect(() => {
     listeners.add(setK);
     // Le voci arrivano in ritardo su alcuni browser: basta chiederle una volta per farle caricare.
-    if (speechSupported()) window.speechSynthesis.getVoices();
+    if (deviceSpeech()) window.speechSynthesis.getVoices();
     return () => { listeners.delete(setK); };
   }, []);
   return k;
