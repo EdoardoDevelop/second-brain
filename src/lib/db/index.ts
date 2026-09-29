@@ -93,7 +93,8 @@ CREATE TABLE IF NOT EXISTS facts (
 -- Suggerimenti dell'IA (Home): azioni proposte da confermare, oppure da ignorare.
 CREATE TABLE IF NOT EXISTS insights (
   id TEXT PRIMARY KEY, day TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
-  actions TEXT NOT NULL DEFAULT '[]', refs TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'new', created_at INTEGER NOT NULL
+  actions TEXT NOT NULL DEFAULT '[]', refs TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'new', created_at INTEGER NOT NULL,
+  why TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS insights_status ON insights(status);
 `;
@@ -131,6 +132,7 @@ const ADD_COLUMNS = [
   "ALTER TABLE facts ADD COLUMN superseded_by TEXT",
   "UPDATE facts SET last_confirmed_at = created_at WHERE last_confirmed_at IS NULL",
   "ALTER TABLE facts ADD COLUMN category TEXT",
+  "ALTER TABLE insights ADD COLUMN why TEXT NOT NULL DEFAULT '[]'",
 ];
 
 /** Crea le tabelle al primo accesso e aggiunge le colonne mancanti. */

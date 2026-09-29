@@ -2,8 +2,8 @@ import "server-only";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { db, newId } from "./db";
-import { insights, items, links } from "./db/schema";
-import { isoDay } from "./format";
+import { insights, items, links, type Why } from "./db/schema";
+import { isoDay, shortDate } from "./format";
 import { budgetState, callJSON } from "./llm";
 import { log } from "./pipeline";
 import { similarPairs, syncEmbeddings } from "./semantic";
@@ -42,7 +42,7 @@ export async function gardenMemory(): Promise<GardenStatus> {
   try {
     if (!(await getAiConfig()).apiKey) throw new Error("IA non configurata.");
     await syncEmbeddings().catch(() => 0);
-    const mem = await db.select({ id: items.id, title: items.title, type: items.type, summary: items.summary, tags: items.tags, createdAt: items.createdAt }).from(items).where(eq(items.status, "memory"));
+    const mem = await db.select({ id: items.id, title: items.title, type: items.type, summary: items.summary, tags: items.tags, projectId: items.projectId, createdAt: items.createdAt }).from(items).where(eq(items.status, "memory"));
     const byId = new Map(mem.map((i) => [i.id, i]));
 
     // 1. Coppie simili mai valutate, senza un collegamento già esistente.
@@ -52,7 +52,18 @@ export async function gardenMemory(): Promise<GardenStatus> {
       .filter((p) => byId.has(p.a) && byId.has(p.b) && !seen.has(`${p.a}|${p.b}`) && !linked.has(`${p.a}|${p.b}`))
       .slice(0, 20);
 
-    const cards: { title: string; body: string; refs: string[]; actions: Record<string, unknown>[] }[] = [];
+    const cards: { title: string; body: string; refs: string[]; actions: Record<string, unknown>[]; why: Why[] }[] = [];
+    const score = new Map(pairs.flatMap((p) => [[`${p.a}|${p.b}`, p.score], [`${p.b}|${p.a}`, p.score]] as [string, number][]));
+    /** I dati che hanno fatto notare la coppia: somiglianza, tipi e date, tag e progetto in comune. */
+    const pairWhy = (a: string, b: string): Why[] => {
+      const A = byId.get(a)!, B = byId.get(b)!;
+      const common = A.tags.filter((t) => B.tags.includes(t));
+      const out: Why[] = [{ text: `Contenuto simile al ${Math.round((score.get(`${a}|${b}`) ?? 0) * 100)}% (ricerca per significato)` }];
+      for (const x of [A, B]) out.push({ text: `«${x.title}»: ${x.type ?? "Nota"} del ${shortDate(x.createdAt)}`, href: `/conoscenza/${x.id}` });
+      if (common.length) out.push({ text: `Tag in comune: ${common.map((t) => "#" + t).join(" ")}` });
+      if (A.projectId && A.projectId === B.projectId) out.push({ text: "Stesso progetto" });
+      return out;
+    };
     if (pairs.length) {
       const view = (id: string) => { const i = byId.get(id)!; return { id, tipo: i.type, titolo: i.title, sintesi: i.summary, tag: i.tags, data: isoDay(i.createdAt) }; };
       const out = await callJSON<z.infer<typeof PairSchema>>({
@@ -74,12 +85,12 @@ export async function gardenMemory(): Promise<GardenStatus> {
         } else if (r.relation === "duplicate") {
           cards.push({
             title: `«${B.title}» sembra un doppione di «${A.title}»`, body: r.reason, refs: [keep, other],
-            actions: [{ kind: "merge_items", label: `Unisci «${B.title}» in «${A.title}»`, itemId: keep, targetId: other, reason: r.reason }],
+            actions: [{ kind: "merge_items", label: `Unisci «${B.title}» in «${A.title}»`, itemId: keep, targetId: other, reason: r.reason }], why: pairWhy(keep, other),
           });
         } else if (r.relation === "supersedes") {
           cards.push({
             title: `«${B.title}» sembra superato da «${A.title}»`, body: r.reason, refs: [keep, other],
-            actions: [{ kind: "archive_item", label: `Archivia «${B.title}»`, itemId: other }],
+            actions: [{ kind: "archive_item", label: `Archivia «${B.title}»`, itemId: other }], why: [...pairWhy(keep, other), { text: `«${A.title}» è più recente o più completo` }],
           });
         }
       }
@@ -120,7 +131,7 @@ export async function gardenMemory(): Promise<GardenStatus> {
     const day = isoDay();
     for (const c of cards.slice(0, 5)) {
       const refs = c.refs.map((id) => ({ id, title: byId.get(id)!.title, href: `/conoscenza/${id}` }));
-      await db.insert(insights).values({ id: newId("in"), day, kind: "cleanup", title: c.title.slice(0, 140), body: c.body.slice(0, 500), actions: c.actions, refs, status: "new", createdAt: new Date() });
+      await db.insert(insights).values({ id: newId("in"), day, kind: "cleanup", title: c.title.slice(0, 140), body: c.body.slice(0, 500), actions: c.actions, refs, why: c.why, status: "new", createdAt: new Date() });
       status.proposed++;
     }
     await log("Cura della memoria", null, `${status.linked} collegamenti aggiunti · ${status.retagged} elementi con tag uniformati · ${status.proposed} proposte da confermare`);

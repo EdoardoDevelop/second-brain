@@ -235,6 +235,9 @@ export const facts = sqliteTable("facts", {
   /** Gruppo nel Memory Inspector; null = da classificare (lo fa l'IA all'apertura della pagina). */
   category: text("category").$type<FactCategory>(),
 });
+/** Un motivo di un suggerimento, con il collegamento a ciò di cui parla. */
+export type Why = { text: string; href?: string };
+
 export const FACT_CATEGORIES = ["personale", "lavoro", "persone", "preferenze"] as const;
 export type FactCategory = (typeof FACT_CATEGORIES)[number];
 export type FactOrigin = "declared" | "inferred" | "observed";
@@ -249,6 +252,8 @@ export const insights = sqliteTable("insights", {
   body: text("body").notNull().default(""),
   actions: text("actions", { mode: "json" }).$type<unknown[]>().notNull().default([]),
   refs: text("refs", { mode: "json" }).$type<{ id: string; title: string; href: string }[]>().notNull().default([]),
+  /** «Perché me lo suggerisci?»: i segnali calcolati dal codice che hanno portato al suggerimento. */
+  why: text("why", { mode: "json" }).$type<Why[]>().notNull().default([]),
   status: text("status").$type<"new" | "done" | "dismissed">().notNull().default("new"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });

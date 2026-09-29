@@ -7,8 +7,9 @@ import type { IconName } from "@/lib/icons";
 import { ActionCard } from "@/components/CommandBar";
 import { completeInsight, dismissInsight, runMorningRound } from "@/lib/actions";
 import type { CommandAction } from "@/lib/ai";
+import type { Why } from "@/lib/db/schema";
 
-type Insight = { id: string; kind: string; title: string; body: string; actions: CommandAction[]; names: Record<string, string>; refs: { id: string; title: string; href: string }[] };
+type Insight = { id: string; kind: string; title: string; body: string; actions: CommandAction[]; names: Record<string, string>; refs: { id: string; title: string; href: string }[]; why?: Why[] };
 
 const KIND: Record<string, [string, IconName]> = {
   project: ["Nuovo progetto?", "folder"],
@@ -59,6 +60,8 @@ export function InsightsWidget({ items, aiOn }: { items: Insight[]; aiOn: boolea
 
 function Card({ x, k, onGone }: { x: Insight; k: number; onGone: () => void }) {
   const [open, setOpen] = useState(false);
+  const [showWhy, setShowWhy] = useState(false);
+  const why = x.why ?? [];
   const [cards, setCards] = useState(x.actions.map((a) => ({ ...a, on: true })));
   const [state, setState] = useState<"idle" | "saving" | "done">("idle");
   const [, start] = useTransition();
@@ -76,6 +79,19 @@ function Card({ x, k, onGone }: { x: Insight; k: number; onGone: () => void }) {
       <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--accent-text)" }}><Icon name={icon} size={13} />{label}</div>
       <div style={{ fontSize: 15, fontWeight: 500, lineHeight: 1.35 }}>{x.title}</div>
       {x.body && <div className="muted" style={{ fontSize: 13.5, lineHeight: 1.5 }}>{x.body}</div>}
+      {why.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <button className="link-btn" onClick={() => setShowWhy((v) => !v)} aria-expanded={showWhy} style={{ alignSelf: "flex-start", fontSize: 12.5, color: "var(--accent-text)", display: "flex", alignItems: "center", gap: 4 }}>
+            <Icon name={showWhy ? "chevD" : "chevR"} size={12} />Perché me lo suggerisci?
+          </button>
+          {showWhy && (
+            <ul className="ins-why">
+              {why.map((w, i) => <li key={i}>{w.href ? <Link href={w.href}>{w.text}</Link> : w.text}</li>)}
+              {x.refs.length > 0 && <li className="faint">{x.refs.length === 1 ? "1 fonte" : `${x.refs.length} fonti`}, qui sotto</li>}
+            </ul>
+          )}
+        </div>
+      )}
       {x.refs.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {x.refs.map((r) => <Link key={r.id} href={r.href} className="nw-topic" style={{ textDecoration: "none" }}>{r.title}</Link>)}

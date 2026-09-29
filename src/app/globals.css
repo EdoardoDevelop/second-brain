@@ -525,3 +525,8 @@ a.cite:hover { background: var(--color-accent); color: var(--color-bg); }
   .set-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .set-head h2 { font-size: 24px; }
 }
+
+/* «Perché me lo suggerisci?» nelle schede dei suggerimenti */
+.ins-why { margin: 0; padding: 8px 10px 8px 24px; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; line-height: 1.45; background: var(--raised); border-left: 2px solid var(--color-accent); }
+.ins-why a { color: inherit; text-decoration: underline; text-decoration-color: var(--color-divider); text-underline-offset: 2px; }
+.ins-why a:hover { text-decoration-color: currentColor; }

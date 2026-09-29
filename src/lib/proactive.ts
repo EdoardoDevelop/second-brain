@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { and, desc, eq, gte, inArray, ne } from "drizzle-orm";
 import { db, newId } from "./db";
-import { goals, insights, itemPeople, items, links, people, projects, tasks } from "./db/schema";
+import { goals, insights, itemPeople, items, links, people, projects, tasks, type Why } from "./db/schema";
 import { cleanActions, CommandActionSchema, type CommandAction } from "./ai";
 import { TOOL_BY_NAME } from "./api-core";
 import { dueInfo, isoDay } from "./format";
@@ -136,7 +136,51 @@ const InsightLoose = z.object({
   })),
 });
 
-export type InsightRow = { id: string; kind: string; title: string; body: string; actions: CommandAction[]; names: Record<string, string>; refs: { id: string; title: string; href: string }[] };
+export type InsightRow = { id: string; kind: string; title: string; body: string; actions: CommandAction[]; names: Record<string, string>; refs: { id: string; title: string; href: string }[]; why: Why[] };
+
+const ddmm = (day: string) => day.slice(8, 10) + "/" + day.slice(5, 7);
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * «Perché me lo suggerisci?»: i segnali calcolati dal codice che riguardano gli elementi del suggerimento
+ * (quelli citati e quelli toccati dalle azioni). Sono dati, non parole dell'IA.
+ */
+function evidence(s: Awaited<ReturnType<typeof signals>>, kind: string, ids: Set<string>): Why[] {
+  // Un gruppo di motivi per segnale: quello del tipo di suggerimento va per primo.
+  const by: Record<string, Why[]> = { project: [], follow_up: [], stale: [], overdue: [], conflict: [], weekly: [] };
+  let out = by.project;
+  for (const c of s.clusters) {
+    if (!c.items.some((i) => ids.has(i.id))) continue;
+    out.push({ text: `${plural(c.items.length, "nota recente senza progetto ha", "note recenti senza progetto hanno")} il tag #${c.tag}: ${c.items.slice(0, 3).map((i) => `«${i.title}»`).join(", ")}${c.items.length > 3 ? "…" : ""}`, href: `/conoscenza/${c.items[0].id}` });
+  }
+  out = by.follow_up;
+  for (const p of s.quiet) {
+    if (!ids.has(p.id) && !p.pendingTasks.some((t) => ids.has(t.id))) continue;
+    out.push({ text: `Non ci sono novità su ${p.name}${p.role ? ` (${p.role})` : ""} da ${p.days} giorni`, href: `/persone/${p.id}` });
+    if (p.pendingTasks.length) out.push({ text: `${plural(p.pendingTasks.length, "attività in sospeso collegata", "attività in sospeso collegate")}: ${p.pendingTasks.slice(0, 3).map((t) => `«${t.title}»`).join(", ")}`, href: "/attivita" });
+  }
+  out = by.stale;
+  for (const p of s.stale) {
+    if (!ids.has(p.id)) continue;
+    out.push({ text: `Nessuna novità sul progetto «${p.name}» da ${p.days} giorni`, href: `/progetti/${p.id}` });
+    out.push({ text: `Avanzamento ${p.pct}% · ${plural(p.openTasks, "attività aperta", "attività aperte")} · ${plural(p.openGoals, "obiettivo aperto", "obiettivi aperti")}${p.next ? ` · prossima milestone: ${p.next}` : ""}` });
+  }
+  out = by.overdue;
+  for (const t of s.overdue) {
+    if (!ids.has(t.id)) continue;
+    out.push({ text: `«${t.title}» è scaduta da ${t.days} giorni (il ${ddmm(t.due!)})`, href: "/attivita" });
+  }
+  out = by.conflict;
+  for (const c of s.conflicts) {
+    if (!ids.has(c.a.id) && !ids.has(c.b.id)) continue;
+    out.push({ text: `«${c.a.title}» e «${c.b.title}» si contraddicono${c.reason ? `: ${c.reason}` : ""}`, href: `/conoscenza/${c.a.id}` });
+  }
+  out = by.weekly;
+  if (kind === "weekly" && s.week) {
+    out.push({ text: `Negli ultimi 7 giorni: ${plural(s.week.captured.length, "elemento nuovo", "elementi nuovi")}, ${plural(s.week.decisions.length, "decisione", "decisioni")}, ${plural(s.week.openTasks, "attività ancora aperta", "attività ancora aperte")}` });
+  }
+  return [...(by[kind] ?? []), ...Object.entries(by).filter(([k]) => k !== kind).flatMap(([, v]) => v)].slice(0, 6);
+}
 
 /** Suggerimenti del giorno (sostituiscono quelli nuovi dei giorni precedenti). */
 export async function generateInsights(): Promise<number> {
@@ -175,7 +219,9 @@ Scegli solo ciò che è davvero utile; meglio pochi suggerimenti buoni. Usa solo
     const actions = cleanActions(ins.actions, ctx);
     const refs = [...new Set(ins.refs)].filter((id) => titles.has(id)).slice(0, 6).map((id) => ({ id, title: titles.get(id)![0], href: titles.get(id)![1] }));
     const kind = ["project", "follow_up", "stale", "overdue", "conflict", "weekly"].includes(ins.kind) ? ins.kind : "other";
-    await db.insert(insights).values({ id: newId("in"), day, kind, title: ins.title.slice(0, 140), body: ins.body.slice(0, 500), actions, refs, status: "new", createdAt: new Date() });
+    const touched = new Set([...ins.refs, ...actions.flatMap((a) => [a.itemId, a.targetId, a.taskId, a.projectId, a.personId, a.goalId]).filter((x): x is string => !!x)]);
+    const why = evidence(s, kind, touched);
+    await db.insert(insights).values({ id: newId("in"), day, kind, title: ins.title.slice(0, 140), body: ins.body.slice(0, 500), actions, refs, why, status: "new", createdAt: new Date() });
     n++;
   }
   await log("Suggerimenti", null, `${n} proposti`);
@@ -193,7 +239,7 @@ export async function listInsights(): Promise<InsightRow[]> {
     ...[...ctx.projects, ...ctx.people].map((x) => [x.id, x.name]),
     ...[...ctx.tasks, ...ctx.items, ...ctx.goals, ...extra].map((x) => [x.id, x.title]),
   ]);
-  return rows.map((r) => ({ id: r.id, kind: r.kind, title: r.title, body: r.body, actions: r.actions as CommandAction[], names, refs: r.refs }));
+  return rows.map((r) => ({ id: r.id, kind: r.kind, title: r.title, body: r.body, actions: r.actions as CommandAction[], names, refs: r.refs, why: r.why ?? [] }));
 }
 
 /** Il giro del mattino: riepilogo e suggerimenti (se c'è budget). Restituisce il riepilogo, se scritto. */
