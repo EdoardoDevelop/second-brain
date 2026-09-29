@@ -218,6 +218,17 @@ export default async function Home() {
           <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--accent-text)" }}><Icon name="ai" size={13} />Il punto del mattino</div>
           <p style={{ margin: 0, fontSize: 17, lineHeight: 1.6, textWrap: "pretty" }}><strong style={{ fontWeight: 600 }}>{brief.title}</strong> {brief.body}</p>
           {brief.highlights.length > 0 && <ul>{brief.highlights.map((h) => <li key={h}>{h}</li>)}</ul>}
+          {!!(brief.changes?.length || brief.delta?.length) && (
+            <div className="brief-changes">
+              <div className="eyebrow">{brief.sinceLabel ?? "Da ieri"}</div>
+              {!!brief.changes?.length && <ul>{brief.changes.map((c) => <li key={c}>{c}</li>)}</ul>}
+              {!!brief.delta?.length && (
+                <div className="brief-delta">
+                  {brief.delta.map((d) => <Link key={d.label} href={d.href}>{d.label}</Link>)}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ) : (
       <p style={{ margin: 0, fontSize: 17, lineHeight: 1.6, textWrap: "pretty" }}>{sentence}</p>

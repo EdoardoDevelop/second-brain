@@ -168,6 +168,9 @@ export async function dailyDigestTick() {
   const head = [dueToday.length && `${dueToday.length} in scadenza oggi`, overdue.length && `${overdue.length} scadute`].filter(Boolean).join(", ") || "nessuna scadenza oggi";
   const list = [...dueToday, ...overdue].slice(0, 4).map((t) => "• " + t.title);
   if (inbox.length) list.push(`${inbox.length} ${inbox.length === 1 ? "cattura" : "catture"} da confermare in Inbox`);
+  const { computeChanges, changesLine } = await import("./proactive");
+  const news = await computeChanges().then(changesLine).catch(() => "");
+  if (news) list.push(news);
   const { name } = await getProfile();
   await sendPush({ title: `Buongiorno${name ? `, ${name}` : ""}! ${head.charAt(0).toUpperCase() + head.slice(1)}`, body: list.join("\n") || "Giornata libera: buon lavoro!", url: "/", tag: "daily" });
 }

@@ -1,6 +1,6 @@
 import "server-only";
 import { z } from "zod";
-import { and, desc, eq, gte, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { db, newId } from "./db";
 import { facts, goals, insights, itemPeople, items, links, people, projects, tasks, type Why } from "./db/schema";
 import { cleanActions, CommandActionSchema, type CommandAction } from "./ai";
@@ -20,7 +20,11 @@ import { getSetting, setSetting } from "./settings";
 
 const DAY = 86400000;
 
-export type DailyBrief = { day: string; title: string; body: string; highlights: string[]; at: number };
+export type DailyBrief = {
+  day: string; title: string; body: string; highlights: string[]; at: number;
+  /** «Cosa è cambiato» dall'ultimo riepilogo: righe scritte dall'IA, etichetta del periodo («Da ieri», «Da venerdì») e conteggi con i link. */
+  changes?: string[]; sinceLabel?: string; delta?: { label: string; href: string }[];
+};
 
 export async function getDailyBrief(): Promise<DailyBrief | null> {
   try {
@@ -33,23 +37,178 @@ const BriefSchema = z.object({
   title: z.string().describe("Saluto e sintesi della giornata in una riga, massimo 60 caratteri (es. «Buongiorno! Due scadenze e una riunione»)"),
   body: z.string().describe("Una o due frasi per la notifica: le cose più importanti di oggi"),
   highlights: z.array(z.string()).describe("2-5 punti brevi e concreti: cosa fare oggi, cosa scade, cosa aspetta in Inbox, eventuali attenzioni"),
+  changes: z.array(z.string()).describe("Cosa è cambiato dall'ultimo riepilogo, in 1-4 righe brevi, usando SOLO <cambiato>: raggruppa (es. «3 note nuove su Progetto Alpha, 2 senza progetto»), cita nomi e titoli solo se pochi. Non ripetere i punti di highlights. Vuoto se non è cambiato nulla."),
 });
+
+// ——— Cosa è cambiato dall'ultimo riepilogo ———
+
+/**
+ * Istantanea di ciò che non ha una data propria (attività completate, scadute, persone da risentire, conflitti,
+ * fatti non più veri): il confronto con quella del giorno prima dice cosa è cambiato.
+ */
+type Snapshot = { done: string[]; overdue: string[]; quiet: string[]; conflicts: string[]; obsolete: string[] };
+type SnapState = { day: string; at: number; data: Snapshot };
+
+export type Changes = {
+  since: number;
+  newItems: { project: string | null; projectId: string | null; items: { id: string; title: string; type: string | null }[] }[];
+  completed: { id: string; title: string }[];
+  newTasks: { id: string; title: string; due: string | null }[];
+  newlyOverdue: { id: string; title: string; due: string | null }[];
+  heard: { id: string; name: string; items: number }[];
+  toReach: { id: string; name: string; days: number }[];
+  newConflicts: { a: string; b: string; reason: string }[];
+  newFacts: string[];
+  endedFacts: string[];
+};
+
+/** Persone non sentite da oltre 30 giorni che hanno attività aperte legate a loro. */
+function quietPeople(
+  mem: { id: string; createdAt: Date }[], pp: { id: string; name: string; role: string | null }[],
+  ip: { itemId: string; personId: string }[], openTasks: { id: string; title: string; sourceItemId: string | null }[], now: number,
+) {
+  const lastSeen = new Map<string, number>();
+  const memAt = new Map(mem.map((i) => [i.id, i.createdAt.getTime()]));
+  for (const x of ip) { const at = memAt.get(x.itemId); if (at) lastSeen.set(x.personId, Math.max(lastSeen.get(x.personId) ?? 0, at)); }
+  return pp.map((p) => {
+    const at = lastSeen.get(p.id);
+    const theirItems = new Set(ip.filter((x) => x.personId === p.id).map((x) => x.itemId));
+    const pending = openTasks.filter((t) => t.sourceItemId && theirItems.has(t.sourceItemId));
+    return { id: p.id, name: p.name, role: p.role, days: at ? Math.round((now - at) / DAY) : null, pendingTasks: pending.map((t) => ({ id: t.id, title: t.title })) };
+  }).filter((p): p is typeof p & { days: number } => p.days != null && p.days > 30 && p.pendingTasks.length > 0);
+}
+
+/**
+ * Differenze dall'ultimo riepilogo, calcolate dal codice. La base è l'istantanea del primo riepilogo di un giorno
+ * precedente (al massimo 7 giorni fa), quindi rifare il riepilogo durante la giornata non azzera le novità.
+ * Senza istantanea (prima volta) valgono le ultime 24 ore e i confronti tra istantanee restano vuoti.
+ */
+export async function computeChanges(): Promise<Changes> {
+  const now = Date.now();
+  const today = isoDay();
+  const [mem, ps, pp, ip, ts, ls, fs] = await Promise.all([
+    db.select({ id: items.id, title: items.title, type: items.type, projectId: items.projectId, createdAt: items.createdAt, confirmedAt: items.confirmedAt }).from(items).where(eq(items.status, "memory")),
+    db.select({ id: projects.id, name: projects.name }).from(projects),
+    db.select({ id: people.id, name: people.name, role: people.role }).from(people),
+    db.select().from(itemPeople),
+    db.select({ id: tasks.id, title: tasks.title, done: tasks.done, due: tasks.due, sourceItemId: tasks.sourceItemId, createdAt: tasks.createdAt }).from(tasks),
+    db.select().from(links).where(eq(links.kind, "conflict")),
+    db.select({ id: facts.id, text: facts.text, status: facts.status, createdAt: facts.createdAt }).from(facts),
+  ]);
+  const openTasks = ts.filter((t) => !t.done);
+  const snap: Snapshot = {
+    done: ts.filter((t) => t.done).map((t) => t.id),
+    overdue: openTasks.filter((t) => t.due && t.due < today).map((t) => t.id),
+    quiet: quietPeople(mem, pp, ip, openTasks, now).map((p) => p.id),
+    conflicts: ls.map((l) => `${l.fromId}|${l.toId}`),
+    obsolete: fs.filter((f) => f.status === "obsolete").map((f) => f.id),
+  };
+
+  // Rotazione: la prima volta di ogni giorno l'istantanea precedente diventa la base di oggi.
+  const parse = (k: string) => { try { return JSON.parse(k) as SnapState | null; } catch { return null; } };
+  const cur = parse((await getSetting("brief_snap")) ?? "null");
+  let base = parse((await getSetting("brief_base")) ?? "null");
+  if (cur?.day !== today) {
+    base = cur;
+    await setSetting("brief_base", JSON.stringify(base));
+    await setSetting("brief_snap", JSON.stringify({ day: today, at: now, data: snap } satisfies SnapState));
+  }
+  if (base && now - base.at > 7 * DAY) base = null;
+  const since = base?.at ?? now - DAY;
+  const prev = base?.data;
+  const fresh = (ids: string[], old: string[] | undefined) => { const o = new Set(old ?? ids); return ids.filter((id) => !o.has(id)); };
+
+  const projectName = new Map(ps.map((p) => [p.id, p.name]));
+  const added = mem.filter((i) => (i.confirmedAt ?? i.createdAt).getTime() >= since);
+  const groups = new Map<string | null, typeof added>();
+  for (const i of added) { const k = i.projectId && projectName.has(i.projectId) ? i.projectId : null; groups.set(k, [...(groups.get(k) ?? []), i]); }
+  const newItems = [...groups].sort((a, b) => b[1].length - a[1].length).map(([pid, l]) => ({
+    project: pid ? projectName.get(pid)! : null, projectId: pid, items: l.slice(0, 5).map((i) => ({ id: i.id, title: i.title, type: i.type })),
+  }));
+
+  const addedIds = new Set(added.map((i) => i.id));
+  const heardCount = new Map<string, number>();
+  for (const x of ip) if (addedIds.has(x.itemId)) heardCount.set(x.personId, (heardCount.get(x.personId) ?? 0) + 1);
+  const quiet = quietPeople(mem, pp, ip, openTasks, now);
+  const newQuiet = new Set(fresh(snap.quiet, prev?.quiet));
+  const task = new Map(ts.map((t) => [t.id, t]));
+  const memTitle = new Map(mem.map((i) => [i.id, i.title]));
+  const yesterday = isoDay(new Date(now - DAY));
+
+  return {
+    since,
+    newItems,
+    completed: fresh(snap.done, prev?.done).map((id) => ({ id, title: task.get(id)!.title })).slice(0, 10),
+    newTasks: openTasks.filter((t) => t.createdAt.getTime() >= since).map((t) => ({ id: t.id, title: t.title, due: t.due })).slice(0, 10),
+    // Senza base: quelle scadute ieri (sono diventate scadute oggi).
+    newlyOverdue: (prev ? fresh(snap.overdue, prev.overdue) : openTasks.filter((t) => t.due === yesterday).map((t) => t.id))
+      .map((id) => ({ id, title: task.get(id)!.title, due: task.get(id)!.due })).slice(0, 10),
+    heard: [...heardCount].map(([id, n]) => ({ id, name: pp.find((p) => p.id === id)?.name ?? "", items: n })).filter((p) => p.name).slice(0, 8),
+    toReach: quiet.filter((p) => newQuiet.has(p.id)).map((p) => ({ id: p.id, name: p.name, days: p.days })),
+    newConflicts: fresh(snap.conflicts, prev?.conflicts).map((k) => ls.find((l) => `${l.fromId}|${l.toId}` === k)!)
+      .filter((l) => memTitle.has(l.fromId) && memTitle.has(l.toId))
+      .map((l) => ({ a: memTitle.get(l.fromId)!, b: memTitle.get(l.toId)!, reason: l.reason })).slice(0, 5),
+    newFacts: fs.filter((f) => f.status === "confirmed" && f.createdAt.getTime() >= since).map((f) => f.text).slice(0, 5),
+    endedFacts: fresh(snap.obsolete, prev?.obsolete).map((id) => fs.find((f) => f.id === id)!.text).slice(0, 5),
+  };
+}
+
+const isEmpty = (c: Changes) => !c.newItems.length && !c.completed.length && !c.newTasks.length && !c.newlyOverdue.length
+  && !c.heard.length && !c.toReach.length && !c.newConflicts.length && !c.newFacts.length && !c.endedFacts.length;
+
+/** «Da ieri», «Da venerdì» o «Dal 21 settembre»: il periodo coperto dalle novità. */
+function sinceLabel(since: number) {
+  const days = Math.round((Date.parse(isoDay()) - Date.parse(isoDay(new Date(since)))) / DAY);
+  if (days <= 1) return "Da ieri";
+  if (days < 7) {
+    const wd = new Intl.DateTimeFormat("it-IT", { timeZone: "Europe/Rome", weekday: "long" }).format(new Date(since));
+    return "Da " + wd;
+  }
+  return "Dal " + new Intl.DateTimeFormat("it-IT", { timeZone: "Europe/Rome", day: "numeric", month: "long" }).format(new Date(since));
+}
+
+/** Conteggi con il link alla pagina dove vederli (sotto le righe dell'IA). */
+function deltaChips(c: Changes): { label: string; href: string }[] {
+  const n = c.newItems.reduce((s, g) => s + g.items.length, 0);
+  const plural = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+  return [
+    n && { label: plural(n, "elemento nuovo", "elementi nuovi"), href: "/timeline" },
+    c.completed.length && { label: plural(c.completed.length, "attività completata", "attività completate"), href: "/attivita" },
+    c.newTasks.length && { label: plural(c.newTasks.length, "attività nuova", "attività nuove"), href: "/attivita" },
+    c.newlyOverdue.length && { label: plural(c.newlyOverdue.length, "scaduta", "scadute"), href: "/attivita" },
+    c.heard.length && { label: plural(c.heard.length, "persona sentita", "persone sentite"), href: "/persone" },
+    c.toReach.length && { label: plural(c.toReach.length, "da risentire", "da risentire"), href: "/persone" },
+    c.newConflicts.length && { label: plural(c.newConflicts.length, "conflitto nuovo", "conflitti nuovi"), href: "/conoscenza" },
+    (c.newFacts.length || c.endedFacts.length) && { label: plural(c.newFacts.length + c.endedFacts.length, "fatto su di te", "fatti su di te"), href: "/memoria" },
+  ].filter((x): x is { label: string; href: string } => !!x);
+}
+
+/** Per la notifica senza IA: le novità in una riga. */
+export function changesLine(c: Changes) {
+  const chips = deltaChips(c);
+  return chips.length ? `${sinceLabel(c.since)}: ${chips.map((x) => x.label).join(", ")}` : "";
+}
 
 /** Riepilogo del mattino scritto dall'IA (salvato in settings.daily_brief e mostrato nella Home). */
 export async function morningBrief(): Promise<DailyBrief> {
   const today = await TOOL_BY_NAME.get("today")!.run({});
-  const since = new Date(Date.now() - DAY);
-  const recent = await db.select({ title: items.title, type: items.type }).from(items).where(and(eq(items.status, "memory"), gte(items.createdAt, since))).limit(15);
+  const changes = await computeChanges();
+  const empty = isEmpty(changes);
+  // Solo i campi con qualcosa, per non far inventare novità all'IA.
+  const delta = Object.fromEntries(Object.entries(changes).filter(([k, v]) => k !== "since" && Array.isArray(v) && v.length));
   const out = await callJSON<z.infer<typeof BriefSchema>>({
     tier: "smart", task: "riepilogo_mattino", name: "riepilogo_mattino", maxTokens: 1200,
     messages: [
-      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo." },
-      { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>\n<ultime_24_ore>\n${JSON.stringify(recent)}\n</ultime_24_ore>` },
+      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights." },
+      { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>\n<cambiato>\n${empty ? "Nulla di nuovo." : JSON.stringify(delta)}\n</cambiato>` },
     ],
     jsonSchema: z.toJSONSchema(BriefSchema),
     parse: (v) => BriefSchema.safeParse(v) as { success: true; data: z.infer<typeof BriefSchema> } | { success: false },
   });
-  const brief: DailyBrief = { day: isoDay(), title: out.title.slice(0, 80), body: out.body.slice(0, 300), highlights: out.highlights.slice(0, 5), at: Date.now() };
+  const brief: DailyBrief = {
+    day: isoDay(), title: out.title.slice(0, 80), body: out.body.slice(0, 300), highlights: out.highlights.slice(0, 5), at: Date.now(),
+    changes: empty ? [] : out.changes.map((c) => c.trim()).filter(Boolean).slice(0, 4), sinceLabel: sinceLabel(changes.since), delta: deltaChips(changes),
+  };
   await setSetting("daily_brief", JSON.stringify(brief));
   await log("Riepilogo del mattino", null, brief.title);
   return brief;
@@ -77,16 +236,8 @@ async function signals() {
     .map(([tag, l]) => ({ tag, items: l.slice(0, 6).map((i) => ({ id: i.id, title: i.title })) }));
 
   // Persone non sentite da oltre 30 giorni con attività aperte o in progetti attivi.
-  const lastSeen = new Map<string, number>();
-  const memAt = new Map(mem.map((i) => [i.id, i.createdAt.getTime()]));
-  for (const x of ip) { const at = memAt.get(x.itemId); if (at) lastSeen.set(x.personId, Math.max(lastSeen.get(x.personId) ?? 0, at)); }
   const openTasks = ts.filter((t) => !t.done);
-  const quiet = pp.map((p) => {
-    const at = lastSeen.get(p.id);
-    const theirItems = new Set(ip.filter((x) => x.personId === p.id).map((x) => x.itemId));
-    const pending = openTasks.filter((t) => t.sourceItemId && theirItems.has(t.sourceItemId));
-    return { id: p.id, name: p.name, role: p.role, days: at ? Math.round((now - at) / DAY) : null, pendingTasks: pending.map((t) => ({ id: t.id, title: t.title })) };
-  }).filter((p) => p.days != null && p.days > 30 && p.pendingTasks.length).slice(0, 4);
+  const quiet = quietPeople(mem, pp, ip, openTasks, now).slice(0, 4);
 
   // Progetti attivi fermi: niente di nuovo da 14 giorni.
   const stale = ps.filter((p) => p.status === "Attivo").map((p) => {
