@@ -1,7 +1,7 @@
 import "server-only";
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { db, ready } from "./db";
-import { aiLog, attachments, goals, itemPeople, items, links, people, projects, tasks, type Item } from "./db/schema";
+import { aiLog, aimItems, aims, attachments, goals, itemPeople, items, links, people, projects, tasks, type Aim, type Item } from "./db/schema";
 import type { CommandContext, MemoryContext } from "./ai";
 import { isoDay } from "./format";
 
@@ -191,7 +191,7 @@ export async function getPersonDetail(id: string) {
 export async function commandContext(): Promise<CommandContext> {
   await ready();
   const taskCols = { id: tasks.id, title: tasks.title, due: tasks.due, projectId: tasks.projectId, done: tasks.done };
-  const [ps, pp, open, closed, its, gs] = await Promise.all([
+  const [ps, pp, open, closed, its, gs, as] = await Promise.all([
     db.select({ id: projects.id, name: projects.name, status: projects.status, pct: projects.pct }).from(projects),
     db.select({ id: people.id, name: people.name, role: people.role, org: people.org }).from(people),
     db.select(taskCols).from(tasks).where(eq(tasks.done, false)),
@@ -201,10 +201,11 @@ export async function commandContext(): Promise<CommandContext> {
     db.select({ id: items.id, type: items.type, createdAt: items.createdAt, title: items.title, tags: items.tags })
       .from(items).where(eq(items.status, "memory")).orderBy(desc(items.createdAt)).limit(300),
     db.select({ id: goals.id, title: goals.title, projectId: goals.projectId, done: goals.done }).from(goals),
+    db.select({ id: aims.id, title: aims.title, status: aims.status, due: aims.due }).from(aims),
   ]);
   const weekday = new Intl.DateTimeFormat("it-IT", { timeZone: "Europe/Rome", weekday: "long" }).format(new Date());
   return {
-    today: `${isoDay()} (${weekday})`, projects: ps, people: pp, tasks: [...open, ...closed], goals: gs,
+    today: `${isoDay()} (${weekday})`, projects: ps, people: pp, tasks: [...open, ...closed], goals: gs, aims: as,
     items: its.map(({ createdAt, ...i }) => ({ ...i, date: isoDay(createdAt) })),
   };
 }
@@ -389,4 +390,52 @@ export async function briefData(kind: "project" | "person", id: string): Promise
       totalItems: list.length,
     },
   };
+}
+
+// ——— Obiettivi personali ———
+
+export type AimSummary = Aim & { openTasks: number; doneTasks: number; items: number; lastActivity: number | null };
+
+/** Tutti gli obiettivi personali con i conteggi di attività ed elementi collegati. */
+export async function getAims(): Promise<AimSummary[]> {
+  await ready();
+  const [as, ts, linkRows, mem] = await Promise.all([
+    db.select().from(aims).orderBy(asc(aims.due), desc(aims.createdAt)),
+    db.select({ aimId: tasks.aimId, done: tasks.done, createdAt: tasks.createdAt }).from(tasks).where(isNotNull(tasks.aimId)),
+    db.select().from(aimItems),
+    db.select({ id: items.id, createdAt: items.createdAt }).from(items).where(eq(items.status, "memory")),
+  ]);
+  const memAt = new Map(mem.map((i) => [i.id, i.createdAt.getTime()]));
+  return as.map((a) => {
+    const t = ts.filter((x) => x.aimId === a.id);
+    const its = linkRows.filter((l) => l.aimId === a.id && memAt.has(l.itemId));
+    const times = [...t.map((x) => x.createdAt.getTime()), ...its.map((l) => memAt.get(l.itemId)!)];
+    return { ...a, openTasks: t.filter((x) => !x.done).length, doneTasks: t.filter((x) => x.done).length, items: its.length, lastActivity: times.length ? Math.max(...times) : null };
+  });
+}
+
+/** Dettaglio di un obiettivo: attività ed elementi collegati. */
+export async function getAimDetail(id: string) {
+  await ready();
+  const [aim] = await db.select().from(aims).where(eq(aims.id, id));
+  if (!aim) return null;
+  const [ts, linkRows] = await Promise.all([
+    db.select().from(tasks).where(eq(tasks.aimId, id)).orderBy(asc(tasks.done), asc(tasks.due), desc(tasks.createdAt)),
+    db.select({ itemId: aimItems.itemId }).from(aimItems).where(eq(aimItems.aimId, id)),
+  ]);
+  const its = linkRows.length
+    ? await db.select({ id: items.id, title: items.title, type: items.type, kind: items.kind, createdAt: items.createdAt, summary: items.summary })
+      .from(items).where(and(inArray(items.id, linkRows.map((l) => l.itemId)), eq(items.status, "memory"))).orderBy(desc(items.createdAt))
+    : [];
+  return { aim, tasks: ts, items: its };
+}
+
+/** Obiettivi collegati a un elemento e quelli ancora aperti a cui collegarlo. */
+export async function getItemAims(itemId: string) {
+  await ready();
+  const [linked, open] = await Promise.all([
+    db.select({ id: aims.id, title: aims.title, status: aims.status }).from(aimItems).innerJoin(aims, eq(aims.id, aimItems.aimId)).where(eq(aimItems.itemId, itemId)),
+    db.select({ id: aims.id, title: aims.title, status: aims.status }).from(aims).where(inArray(aims.status, ["active", "paused"])).orderBy(aims.title),
+  ]);
+  return { linked, open };
 }

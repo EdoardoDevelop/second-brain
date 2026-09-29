@@ -97,6 +97,12 @@ CREATE TABLE IF NOT EXISTS insights (
   why TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS insights_status ON insights(status);
+-- Obiettivi personali (non di un progetto) e gli elementi collegati; le attività li indicano con tasks.aim_id.
+CREATE TABLE IF NOT EXISTS aims (
+  id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+  due TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, done_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS aim_items (aim_id TEXT NOT NULL, item_id TEXT NOT NULL, PRIMARY KEY (aim_id, item_id));
 `;
 
 const g = globalThis as unknown as { __sbClient?: Client; __sbReady?: Promise<void> };
@@ -133,6 +139,7 @@ const ADD_COLUMNS = [
   "UPDATE facts SET last_confirmed_at = created_at WHERE last_confirmed_at IS NULL",
   "ALTER TABLE facts ADD COLUMN category TEXT",
   "ALTER TABLE insights ADD COLUMN why TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE tasks ADD COLUMN aim_id TEXT",
 ];
 
 /** Crea le tabelle al primo accesso e aggiunge le colonne mancanti. */

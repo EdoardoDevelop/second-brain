@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { db, newId } from "./db";
-import { facts, goals, insights, itemPeople, items, links, people, projects, tasks, type Why } from "./db/schema";
+import { aimItems, aims, facts, goals, insights, itemPeople, items, links, people, projects, tasks, type Why } from "./db/schema";
 import { cleanActions, CommandActionSchema, type CommandAction } from "./ai";
 import { TOOL_BY_NAME } from "./api-core";
 import { dueInfo, isoDay } from "./format";
@@ -218,7 +218,7 @@ export async function morningBrief(): Promise<DailyBrief> {
 async function signals() {
   const now = Date.now();
   const today = isoDay();
-  const [mem, ps, pp, ip, ts, gs, ls] = await Promise.all([
+  const [mem, ps, pp, ip, ts, gs, ls, as, ai] = await Promise.all([
     db.select({ id: items.id, title: items.title, type: items.type, tags: items.tags, projectId: items.projectId, createdAt: items.createdAt }).from(items).where(eq(items.status, "memory")).orderBy(desc(items.createdAt)),
     db.select().from(projects),
     db.select().from(people),
@@ -226,6 +226,8 @@ async function signals() {
     db.select().from(tasks),
     db.select().from(goals),
     db.select().from(links).where(eq(links.kind, "conflict")),
+    db.select().from(aims).where(eq(aims.status, "active")),
+    db.select().from(aimItems),
   ]);
 
   // Note recenti senza progetto che condividono un tag: forse un progetto nuovo o da assegnare.
@@ -263,15 +265,34 @@ async function signals() {
     openTasks: openTasks.length,
   } : null;
 
-  return { today, clusters, quiet, stale, overdue, conflicts, week, projects: ps.filter((p) => p.status !== "Chiuso").map((p) => ({ id: p.id, name: p.name })) };
+  // Obiettivi personali attivi: tutti (sono pochi), con i segnali che meritano attenzione.
+  const memAt = new Map(mem.map((i) => [i.id, i.createdAt.getTime()]));
+  const aimed = new Set(ai.map((x) => x.itemId));
+  const personalGoals = as.map((a) => {
+    const t = ts.filter((x) => x.aimId === a.id);
+    const linked = ai.filter((x) => x.aimId === a.id && memAt.has(x.itemId));
+    const last = Math.max(a.createdAt.getTime(), ...t.map((x) => x.createdAt.getTime()), ...linked.map((x) => memAt.get(x.itemId)!));
+    const daysLeft = a.due ? Math.round((Date.parse(a.due) - Date.parse(today)) / DAY) : null;
+    const open = t.filter((x) => !x.done);
+    return {
+      id: a.id, title: a.title, description: a.description.slice(0, 200), due: a.due, daysLeft,
+      openTasks: open.slice(0, 5).map((x) => ({ id: x.id, title: x.title, due: x.due })), doneTasks: t.length - open.length,
+      linkedItems: linked.length, idleDays: Math.round((now - last) / DAY),
+      dueSoon: daysLeft != null && daysLeft <= 14, idle: Math.round((now - last) / DAY) >= 21, noNextStep: !open.length,
+    };
+  });
+  // Elementi recenti non ancora collegati a un obiettivo: l'IA può proporre di collegarli (update_item con goalId).
+  const unlinked = personalGoals.length ? mem.filter((i) => !aimed.has(i.id) && now - i.createdAt.getTime() < 14 * DAY).slice(0, 15).map((i) => ({ id: i.id, title: i.title, type: i.type, tags: i.tags })) : [];
+
+  return { today, clusters, quiet, stale, overdue, conflicts, week, personalGoals, unlinked, projects: ps.filter((p) => p.status !== "Chiuso").map((p) => ({ id: p.id, name: p.name })) };
 }
 
 const InsightSchema = z.object({
   insights: z.array(z.object({
-    kind: z.enum(["project", "follow_up", "stale", "overdue", "conflict", "weekly", "other"]),
+    kind: z.enum(["project", "follow_up", "stale", "overdue", "conflict", "weekly", "goal", "other"]),
     title: z.string().describe("Il suggerimento in una riga, concreto (es. «Tre note sul cantiere non hanno un progetto»)"),
     body: z.string().describe("Una o due frasi: perché conta e cosa proponi"),
-    refs: z.array(z.string()).describe("id di elementi, progetti o persone citati"),
+    refs: z.array(z.string()).describe("id di elementi, progetti, persone o obiettivi personali citati"),
     actions: z.array(CommandActionSchema).describe("Azioni da proporre; vuoto se è solo un'osservazione"),
   })),
 });
@@ -298,7 +319,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  */
 function evidence(s: Awaited<ReturnType<typeof signals>>, kind: string, ids: Set<string>): Why[] {
   // Un gruppo di motivi per segnale: quello del tipo di suggerimento va per primo.
-  const by: Record<string, Why[]> = { project: [], follow_up: [], stale: [], overdue: [], conflict: [], weekly: [] };
+  const by: Record<string, Why[]> = { project: [], follow_up: [], stale: [], overdue: [], conflict: [], weekly: [], goal: [] };
   let out = by.project;
   for (const c of s.clusters) {
     if (!c.items.some((i) => ids.has(i.id))) continue;
@@ -326,6 +347,13 @@ function evidence(s: Awaited<ReturnType<typeof signals>>, kind: string, ids: Set
     if (!ids.has(c.a.id) && !ids.has(c.b.id)) continue;
     out.push({ text: `«${c.a.title}» e «${c.b.title}» si contraddicono${c.reason ? `: ${c.reason}` : ""}`, href: `/conoscenza/${c.a.id}` });
   }
+  out = by.goal;
+  for (const g of s.personalGoals) {
+    if (!ids.has(g.id) && !g.openTasks.some((t) => ids.has(t.id))) continue;
+    const when = g.daysLeft == null ? "" : g.daysLeft < 0 ? ` · scaduto da ${-g.daysLeft} giorni` : g.daysLeft === 0 ? " · scade oggi" : ` · mancano ${g.daysLeft} giorni (entro il ${ddmm(g.due!)})`;
+    out.push({ text: `Obiettivo «${g.title}»${when}`, href: `/obiettivi/${g.id}` });
+    out.push({ text: `${plural(g.openTasks.length, "attività aperta", "attività aperte")}, ${plural(g.doneTasks, "fatta", "fatte")} · ${plural(g.linkedItems, "elemento collegato", "elementi collegati")}${g.idle ? ` · nessuna novità da ${g.idleDays} giorni` : ""}` });
+  }
   out = by.weekly;
   if (kind === "weekly" && s.week) {
     out.push({ text: `Negli ultimi 7 giorni: ${plural(s.week.captured.length, "elemento nuovo", "elementi nuovi")}, ${plural(s.week.decisions.length, "decisione", "decisioni")}, ${plural(s.week.openTasks, "attività ancora aperta", "attività ancora aperte")}` });
@@ -336,7 +364,8 @@ function evidence(s: Awaited<ReturnType<typeof signals>>, kind: string, ids: Set
 /** Suggerimenti del giorno (sostituiscono quelli nuovi dei giorni precedenti). */
 export async function generateInsights(): Promise<number> {
   const s = await signals();
-  const empty = !s.clusters.length && !s.quiet.length && !s.stale.length && !s.overdue.length && !s.conflicts.length && !s.week;
+  const goalSignals = s.personalGoals.some((g) => g.dueSoon || g.idle || g.noNextStep) || s.unlinked.length > 0;
+  const empty = !s.clusters.length && !s.quiet.length && !s.stale.length && !s.overdue.length && !s.conflicts.length && !s.week && !goalSignals;
   // Le proposte della cura notturna della memoria («cleanup») restano finché non si decidono.
   await db.update(insights).set({ status: "dismissed" }).where(and(eq(insights.status, "new"), ne(insights.kind, "cleanup")));
   if (empty) { await log("Suggerimenti", null, "Nessun segnale"); return 0; }
@@ -347,7 +376,8 @@ export async function generateInsights(): Promise<number> {
       {
         role: "system",
         content: `Sei il Second Brain dell'utente e oggi proponi al massimo 4 suggerimenti utili, in italiano, a partire dai segnali calcolati sui suoi dati.
-Tipi: project (note senza progetto con un tema comune: proponi create_project, poi update_item per assegnarle), follow_up (persona non sentita da tempo con cose in sospeso: proponi add_task "Sentire …"), stale (progetto fermo: proponi il prossimo passo come add_task), overdue (attività scadute da giorni: proponi set_task_due o complete_task), conflict (informazioni in conflitto da chiarire), weekly (il lunedì, bilancio della settimana in 2-3 frasi, senza azioni).
+Tipi: project (note senza progetto con un tema comune: proponi create_project, poi update_item per assegnarle), follow_up (persona non sentita da tempo con cose in sospeso: proponi add_task "Sentire …"), stale (progetto fermo: proponi il prossimo passo come add_task), overdue (attività scadute da giorni: proponi set_task_due o complete_task), conflict (informazioni in conflitto da chiarire), weekly (il lunedì, bilancio della settimana in 2-3 frasi, senza azioni), goal (obiettivo personale in scadenza, fermo o senza un prossimo passo: proponi add_task con goalId; oppure elementi di unlinked che servono a un obiettivo: proponi update_item con goalId).
+Gli obiettivi personali (personalGoals) sono ciò che conta di più per l'utente: se un suggerimento di qualsiasi tipo è rilevante per uno di essi, dillo nel body («Rilevante per il tuo obiettivo …») e metti il suo id in refs.
 Scegli solo ciò che è davvero utile; meglio pochi suggerimenti buoni. Usa solo gli id presenti nei segnali. Le azioni verranno confermate dall'utente: compila solo i campi che servono, gli altri null.`,
       },
       { role: "user", content: `<segnali>\n${JSON.stringify(s)}\n</segnali>` },
@@ -363,13 +393,14 @@ Scegli solo ciò che è davvero utile; meglio pochi suggerimenti buoni. Usa solo
     ...allItems.map((i): [string, [string, string]] => [i.id, [i.title, `/conoscenza/${i.id}`]]),
     ...ctx.projects.map((p): [string, [string, string]] => [p.id, [p.name, `/progetti/${p.id}`]]),
     ...ctx.people.map((p): [string, [string, string]] => [p.id, [p.name, `/persone/${p.id}`]]),
+    ...ctx.aims.map((a): [string, [string, string]] => [a.id, [a.title, `/obiettivi/${a.id}`]]),
   ]);
   const day = isoDay();
   let n = 0;
   for (const ins of out.insights.slice(0, 4)) {
     const actions = cleanActions(ins.actions, ctx);
     const refs = [...new Set(ins.refs)].filter((id) => titles.has(id)).slice(0, 6).map((id) => ({ id, title: titles.get(id)![0], href: titles.get(id)![1] }));
-    const kind = ["project", "follow_up", "stale", "overdue", "conflict", "weekly"].includes(ins.kind) ? ins.kind : "other";
+    const kind = ["project", "follow_up", "stale", "overdue", "conflict", "weekly", "goal"].includes(ins.kind) ? ins.kind : "other";
     const touched = new Set([...ins.refs, ...actions.flatMap((a) => [a.itemId, a.targetId, a.taskId, a.projectId, a.personId, a.goalId]).filter((x): x is string => !!x)]);
     const why = evidence(s, kind, touched);
     await db.insert(insights).values({ id: newId("in"), day, kind, title: ins.title.slice(0, 140), body: ins.body.slice(0, 500), actions, refs, why, status: "new", createdAt: new Date() });
@@ -390,7 +421,7 @@ export async function listInsights(): Promise<InsightRow[]> {
   const factRows = factIds.length ? await db.select({ id: facts.id, title: facts.text }).from(facts).where(inArray(facts.id, factIds)) : [];
   const names = Object.fromEntries([
     ...[...ctx.projects, ...ctx.people].map((x) => [x.id, x.name]),
-    ...[...ctx.tasks, ...ctx.items, ...ctx.goals, ...extra, ...factRows].map((x) => [x.id, x.title]),
+    ...[...ctx.tasks, ...ctx.items, ...ctx.goals, ...ctx.aims, ...extra, ...factRows].map((x) => [x.id, x.title]),
   ]);
   return rows.map((r) => ({ id: r.id, kind: r.kind, title: r.title, body: r.body, actions: r.actions as CommandAction[], names, refs: r.refs, why: r.why ?? [] }));
 }

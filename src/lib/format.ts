@@ -81,6 +81,12 @@ export function dueInfo(due: string | null): { group: DueGroup; label: string } 
   return { group, label };
 }
 
+/** Come dueInfo, con l'anno se la data non è nell'anno corrente (per le scadenze lontane, es. degli obiettivi). */
+export function dueLabel(due: string): string {
+  const { label } = dueInfo(due);
+  return due.slice(0, 4) !== isoDay().slice(0, 4) && /^\d+ /.test(label) ? `${label} ${due.slice(0, 4)}` : label;
+}
+
 export function greeting(d: Date = new Date()) {
   const h = Number(new Intl.DateTimeFormat("it-IT", { timeZone: TZ, hour: "2-digit", hour12: false }).format(d));
   return h < 13 ? "Buongiorno" : h < 18 ? "Buon pomeriggio" : "Buonasera";

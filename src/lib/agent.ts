@@ -1,7 +1,7 @@
 import "server-only";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "./db";
-import { FACT_CATEGORIES, facts as factsTable, itemPeople, items, people, projects, tasks, type FactCategory } from "./db/schema";
+import { aims, FACT_CATEGORIES, facts as factsTable, itemPeople, items, people, projects, tasks, type FactCategory } from "./db/schema";
 import type { ProposedFact } from "./chat";
 import { cleanActions, commandActionJsonSchema, FACT_CATEGORY_HELP, type ChatTurn, type CommandAction, type CommandContext } from "./ai";
 import { summarizeItems, TOOL_BY_NAME } from "./api-core";
@@ -138,17 +138,19 @@ async function focusInfo(focus?: string): Promise<string> {
 
 /** Quadro di partenza nel prompt (progetti, persone, attività aperte, elementi recenti): evita i passi di sola lettura. */
 async function basics(titles: Map<string, string>): Promise<string> {
-  const [ps, pp, ts, its] = await Promise.all([
+  const [ps, pp, ts, its, as] = await Promise.all([
     db.select({ id: projects.id, name: projects.name, status: projects.status, next: projects.next }).from(projects),
     db.select({ id: people.id, name: people.name, role: people.role, org: people.org }).from(people),
     db.select({ id: tasks.id, title: tasks.title, due: tasks.due, projectId: tasks.projectId }).from(tasks).where(eq(tasks.done, false)).limit(80),
     db.select({ id: items.id, type: items.type, title: items.title, summary: items.summary, createdAt: items.createdAt }).from(items).where(eq(items.status, "memory")).orderBy(desc(items.createdAt)).limit(30),
+    db.select({ id: aims.id, title: aims.title, status: aims.status, due: aims.due }).from(aims).where(inArray(aims.status, ["active", "paused"])),
   ]);
+  for (const x of as) titles.set(x.id, x.title);
   for (const x of ps) titles.set(x.id, x.name);
   for (const x of pp) titles.set(x.id, x.name);
   for (const x of its) titles.set(x.id, x.title);
   return JSON.stringify({
-    progetti: ps, persone: pp, attivita_aperte: ts,
+    progetti: ps, persone: pp, attivita_aperte: ts, obiettivi_personali: as,
     elementi_recenti: its.map((i) => ({ id: i.id, tipo: i.type, titolo: i.title, sintesi: (i.summary ?? "").slice(0, 220), data: isoDay(i.createdAt) })),
   });
 }
@@ -281,7 +283,7 @@ export async function runAgent(o: {
     actions = cleanActions(proposed, ctx);
     names = Object.fromEntries([
       ...[...ctx.projects, ...ctx.people].map((x) => [x.id, x.name]),
-      ...[...ctx.tasks, ...ctx.items, ...ctx.goals].map((x) => [x.id, x.title]),
+      ...[...ctx.tasks, ...ctx.items, ...ctx.goals, ...ctx.aims].map((x) => [x.id, x.title]),
     ]);
   }
 

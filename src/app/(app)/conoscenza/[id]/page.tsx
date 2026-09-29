@@ -3,14 +3,15 @@ import { notFound } from "next/navigation";
 import { Blueprint, Icon, itemIcon } from "@/components/ui";
 import { AiActions, ContentEditor, ItemButtons, MetaEditor } from "./DetailClient";
 import { dueInfo, longDate, shortDate } from "@/lib/format";
-import { getAttachments, getItemDetail, getPeople, getProjects } from "@/lib/queries";
+import { getAttachments, getItemAims, getItemDetail, getPeople, getProjects } from "@/lib/queries";
+import { AimLinks } from "@/components/AimLinks";
 import type { Attachment } from "@/lib/db/schema";
 import { aiEnabled } from "@/lib/ai";
 import { PdfCard } from "@/components/PdfCard";
 
 export default async function DetailPage({ params }: { params: Promise<{ id: string }> }) {
   const id = (await params).id;
-  const [d, allProjects, allPeople, files] = await Promise.all([getItemDetail(id), getProjects(), getPeople(), getAttachments(id)]);
+  const [d, allProjects, allPeople, files, itemAims] = await Promise.all([getItemDetail(id), getProjects(), getPeople(), getAttachments(id), getItemAims(id)]);
   if (!d || d.item.status === "archived") notFound();
   const { item, project, persons, linked, tasks, log } = d;
   const conflicts = linked.filter((l) => l.kind === "conflict");
@@ -113,6 +114,7 @@ export default async function DetailPage({ params }: { params: Promise<{ id: str
       </article>
 
       <aside style={{ display: "flex", flexDirection: "column", gap: 28, paddingTop: 6 }}>
+        <AimLinks itemId={item.id} linked={itemAims.linked} open={itemAims.open} />
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}><Icon name="shield" />Provenienza</div>
           <div style={{ display: "flex", flexDirection: "column" }}>

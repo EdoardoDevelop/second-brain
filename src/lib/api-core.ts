@@ -2,7 +2,7 @@ import "server-only";
 import { and, desc, eq, inArray, like, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db, newId, ready } from "./db";
-import { attachments, goals, itemPeople, items, links, people, projects, tasks } from "./db/schema";
+import { aims, attachments, goals, itemPeople, items, links, people, projects, tasks } from "./db/schema";
 import { aiEnabled } from "./ai";
 import type { ApiScope } from "./api-keys";
 import { captureText } from "./capture";
@@ -73,11 +73,12 @@ export const TOOLS: Tool[] = [
     run: async () => {
       const today = isoDay();
       const n = await names();
-      const [open, inbox, gs, profile] = await Promise.all([
+      const [open, inbox, gs, profile, as] = await Promise.all([
         db.select().from(tasks).where(eq(tasks.done, false)),
         db.select({ id: items.id, title: items.title, status: items.status }).from(items).where(inArray(items.status, ["processing", "ready", "error"])).orderBy(desc(items.createdAt)),
         db.select().from(goals).where(eq(goals.done, false)),
         getProfile(),
+        db.select().from(aims).where(eq(aims.status, "active")),
       ]);
       const sorted = open.sort((a, b) => (a.due ?? "9").localeCompare(b.due ?? "9") || (a.time ?? "99").localeCompare(b.time ?? "99"));
       return {
@@ -89,6 +90,7 @@ export const TOOLS: Tool[] = [
         next7days: sorted.filter((t) => t.due && t.due > today && dueInfo(t.due).group === "week").map((t) => taskOut(t, n.project)),
         inboxToConfirm: inbox.map((i) => ({ id: i.id, title: i.title, status: i.status === "ready" ? "proposta pronta" : i.status === "error" ? "errore" : "in elaborazione" })),
         openGoals: gs.map((g) => ({ id: g.id, title: g.title, project: n.project.get(g.projectId) ?? null })),
+        personalGoals: as.map((a) => ({ id: a.id, title: a.title, due: a.due, openTasks: open.filter((t) => t.aimId === a.id).length })),
       };
     },
   },

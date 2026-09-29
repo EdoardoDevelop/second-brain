@@ -1,6 +1,6 @@
 import { isAuthenticated } from "@/lib/auth";
 import { db, ready } from "@/lib/db";
-import { aiLog, attachments, chats, facts, goals, itemPeople, items, links, people, projects, tasks } from "@/lib/db/schema";
+import { aiLog, aimItems, aims, attachments, chats, facts, goals, itemPeople, items, links, people, projects, tasks } from "@/lib/db/schema";
 import { isoDay, shortDate } from "@/lib/format";
 
 /** Esporta tutti i dati: ?format=json (completo, reimportabile) oppure ?format=md (leggibile). */
@@ -8,15 +8,16 @@ export async function GET(req: Request) {
   if (!(await isAuthenticated())) return new Response("Non autorizzato", { status: 401 });
   await ready();
   const format = new URL(req.url).searchParams.get("format") === "md" ? "md" : "json";
-  const [its, ps, pp, ip, ls, ts, log, att, gs, ch, fa] = await Promise.all([
+  const [its, ps, pp, ip, ls, ts, log, att, gs, ch, fa, am, ai] = await Promise.all([
     db.select().from(items), db.select().from(projects), db.select().from(people), db.select().from(itemPeople),
     db.select().from(links), db.select().from(tasks), db.select().from(aiLog), db.select().from(attachments), db.select().from(goals).orderBy(goals.ord), db.select().from(chats), db.select().from(facts),
+    db.select().from(aims), db.select().from(aimItems),
   ]);
   const name = `second-brain-${isoDay()}.${format}`;
   const headers = (type: string) => ({ "Content-Type": type, "Content-Disposition": `attachment; filename="${name}"` });
 
   if (format === "json") {
-    const body = { exportedAt: new Date().toISOString(), items: its, projects: ps, people: pp, itemPeople: ip, links: ls, tasks: ts, goals: gs, chats: ch, facts: fa, aiLog: log, attachments: att };
+    const body = { exportedAt: new Date().toISOString(), items: its, projects: ps, people: pp, itemPeople: ip, links: ls, tasks: ts, goals: gs, aims: am, aimItems: ai, chats: ch, facts: fa, aiLog: log, attachments: att };
     return new Response(JSON.stringify(body, null, 2), { headers: headers("application/json; charset=utf-8") });
   }
 
@@ -29,6 +30,15 @@ export async function GET(req: Request) {
     out.push(`### ${p.name}`, `Stato: ${p.status} · ${p.pct}%${p.next ? ` · Prossimo: ${p.next}` : ""}`, "", p.description, "");
     const mine = gs.filter((g) => g.projectId === p.id);
     if (mine.length) out.push("Obiettivi:", ...mine.map((g) => `- [${g.done ? "x" : " "}] ${g.title}`), "");
+  }
+
+  if (am.length) {
+    const AIM = { active: "in corso", paused: "in pausa", done: "raggiunto", dropped: "abbandonato" } as const;
+    out.push("## Obiettivi personali", "");
+    for (const a of am) {
+      out.push(`- [${a.status === "done" ? "x" : " "}] **${a.title}** (${AIM[a.status]}${a.due ? `, entro ${a.due}` : ""})${a.description ? `  \n  ${a.description.replace(/\n/g, "  \n  ")}` : ""}`);
+    }
+    out.push("");
   }
 
   out.push("## Persone", "");

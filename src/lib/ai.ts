@@ -120,7 +120,7 @@ export async function runItemAction(kind: AiActionKind, item: { title: string; c
 export const COMMAND_KINDS = [
   "capture", "add_task", "complete_task", "reopen_task", "set_task_due", "update_task", "delete_task",
   "create_project", "update_project", "add_goal", "complete_goal", "reopen_goal", "delete_goal", "upsert_person",
-  "update_item", "append_item", "archive_item", "favorite_item", "link_items", "merge_items",
+  "update_item", "append_item", "archive_item", "favorite_item", "link_items", "merge_items", "update_goal",
 ] as const;
 export type CommandKind = (typeof COMMAND_KINDS)[number];
 
@@ -128,10 +128,10 @@ export const CommandActionSchema = z.object({
   kind: z.enum(COMMAND_KINDS),
   label: z.string().describe("Descrizione breve dell'azione per l'utente, in italiano"),
   text: z.string().nullable().describe("capture: il contenuto da catturare, riscritto in forma pulita; append_item: il testo da aggiungere all'elemento"),
-  title: z.string().nullable().describe("add_task: titolo dell'attività; add_goal: testo dell'obiettivo; create_project: nome del progetto; update_task, update_item: nuovo titolo"),
-  goalId: z.string().nullable().describe("complete_goal, reopen_goal, delete_goal: id di un obiettivo esistente"),
+  title: z.string().nullable().describe("add_task: titolo dell'attività; add_goal: testo dell'obiettivo; create_project: nome del progetto; update_task, update_item, update_goal: nuovo titolo"),
+  goalId: z.string().nullable().describe("complete_goal, reopen_goal, delete_goal, update_goal: id di un obiettivo esistente; add_task, update_task, update_item: id di un obiettivo personale a cui collegare l'attività o l'elemento"),
   taskId: z.string().nullable().describe("complete_task, reopen_task, set_task_due, update_task, delete_task: id di un'attività esistente"),
-  due: z.string().nullable().describe("add_task, set_task_due, update_task: data YYYY-MM-DD oppure null"),
+  due: z.string().nullable().describe("add_task, set_task_due, update_task: data YYYY-MM-DD oppure null; add_goal, update_goal (obiettivo personale): entro quando"),
   time: z.string().nullable().describe("add_task, set_task_due, update_task: orario HH:MM (24 ore) se l'utente lo indica, altrimenti null"),
   remind: z.number().nullable().describe("add_task, set_task_due, update_task: minuti di anticipo del promemoria (0 = all'orario, 60 = un'ora prima); null se non richiesto"),
   prio: z.number().nullable().describe("add_task, update_task: priorità 1 (alta), 2 (media), 3 (bassa)"),
@@ -144,10 +144,10 @@ export const CommandActionSchema = z.object({
   addPeople: z.array(z.string()).nullable().describe("update_item: id di persone esistenti da collegare all'elemento"),
   reason: z.string().nullable().describe("link_items: perché i due elementi sono collegati; merge_items: perché sono doppioni"),
   conflict: z.boolean().nullable().describe("link_items: true se i due elementi si contraddicono; favorite_item: false per togliere dai preferiti"),
-  status: z.enum(["Attivo", "In pausa", "Chiuso"]).nullable().describe("create_project, update_project"),
+  status: z.enum(["Attivo", "In pausa", "Chiuso"]).nullable().describe("create_project, update_project; update_goal: Attivo, In pausa o Chiuso (= abbandonato; se raggiunto usa complete_goal)"),
   pct: z.number().nullable().describe("create_project, update_project: avanzamento 0-100"),
   next: z.string().nullable().describe("create_project, update_project: prossima milestone"),
-  description: z.string().nullable().describe("create_project, update_project: descrizione"),
+  description: z.string().nullable().describe("create_project, update_project, add_goal, update_goal: descrizione (per un obiettivo personale: perché conta, come si misura)"),
   personId: z.string().nullable().describe("upsert_person: id di una persona esistente da modificare, null per crearne una"),
   name: z.string().nullable().describe("upsert_person: nome"),
   role: z.string().nullable(),
@@ -181,6 +181,8 @@ export type CommandContext = {
   people: { id: string; name: string; role: string; org: string }[];
   tasks: { id: string; title: string; due: string | null; projectId: string | null; done?: boolean }[];
   goals: { id: string; title: string; projectId: string; done: boolean }[];
+  /** Obiettivi personali (non di un progetto). */
+  aims: { id: string; title: string; status: string; due: string | null }[];
   items: { id: string; type: string | null; date: string; title: string; tags: string[] }[];
 };
 
@@ -193,7 +195,8 @@ Trasforma la richiesta in azioni. Verranno mostrate all'utente, che le conferma:
 - Orari e promemoria: "alle 15", "domani alle 9:30" → time in HH:MM. "Ricordami", "avvisami", "promemoria" con un orario → remind 0, oppure i minuti di anticipo richiesti ("mezz'ora prima" = 30). Se c'è un orario senza giorno, il giorno è oggi se l'orario non è passato, altrimenti domani. Senza orario non c'è promemoria: time e remind null.
 - update_task: rinomina, sposta in un progetto o cambia priorità o scadenza di un'attività esistente.
 - create_project, update_project: per update_project usa l'id esistente e compila solo i campi da cambiare.
-- add_goal: nuovo obiettivo di un progetto esistente (projectId obbligatorio). complete_goal ("abbiamo raggiunto…"), reopen_goal, delete_goal: su obiettivi esistenti, con goalId. Un obiettivo è un risultato da raggiungere; un'attività è una cosa da fare: se l'utente dice "obiettivo" usa add_goal.
+- add_goal: nuovo obiettivo. Di un progetto esistente se ne parla l'utente (projectId); altrimenti è un obiettivo personale (projectId null, es. "il mio obiettivo è cambiare lavoro entro marzo"), con due se c'è una scadenza. complete_goal ("ho raggiunto…"), reopen_goal, delete_goal, update_goal (titolo, scadenza, stato, descrizione di un obiettivo personale): su obiettivi esistenti (goals o aims), con goalId. Un obiettivo è un risultato da raggiungere; un'attività è una cosa da fare: se l'utente dice "obiettivo" usa add_goal.
+- Collegare un'attività o un elemento a un obiettivo personale: goalId in add_task, update_task o update_item ("per l'obiettivo X", "serve per…").
 - upsert_person: personId esistente per modificare, null per creare. Compila solo i campi citati.
 - update_item: modifica un elemento della memoria (titolo, sintesi, progetto, tag da aggiungere o togliere, persone da collegare).
 - append_item: aggiunge un'informazione a un elemento esistente ("aggiungi alla nota della riunione che…"). Preferiscilo a capture solo se l'utente indica chiaramente l'elemento.
@@ -275,7 +278,7 @@ ${text}
 /** Nomi leggibili degli id del contesto, per le schede delle azioni. */
 export const contextNames = (ctx: CommandContext): Record<string, string> => Object.fromEntries([
   ...[...ctx.projects, ...ctx.people].map((x) => [x.id, x.name]),
-  ...[...ctx.tasks, ...ctx.items, ...ctx.goals].map((x) => [x.id, x.title]),
+  ...[...ctx.tasks, ...ctx.items, ...ctx.goals, ...ctx.aims].map((x) => [x.id, x.title]),
 ]);
 
 /** Schema JSON di un'azione proposta (per lo strumento propose_actions dell'Assistente). */
@@ -294,7 +297,8 @@ export function cleanActions(raw: unknown[], ctx: CommandContext): CommandAction
   const projectIds = new Set(ctx.projects.map((p) => p.id));
   const personIds = new Set(ctx.people.map((p) => p.id));
   const itemIds = new Set(ctx.items.map((i) => i.id));
-  const goalIds = new Set(ctx.goals.map((g) => g.id));
+  const goalIds = new Set([...ctx.goals, ...ctx.aims].map((g) => g.id));
+  const aimIds = new Set(ctx.aims.map((g) => g.id));
   const validDay = (d: string | null) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null);
   const cleanTags = (t: string[] | null) => (t ? [...new Set(t.map((x) => x.trim().replace(/^#/, "")).filter(Boolean))] : null);
   return full
@@ -313,7 +317,8 @@ export function cleanActions(raw: unknown[], ctx: CommandContext): CommandAction
       projectId: a.projectId && projectIds.has(a.projectId) ? a.projectId : null,
       personId: a.personId && personIds.has(a.personId) ? a.personId : null,
       taskId: a.taskId && taskIds.has(a.taskId) ? a.taskId : null,
-      goalId: a.goalId && goalIds.has(a.goalId) ? a.goalId : null,
+      // Nelle attività e negli elementi goalId indica solo un obiettivo personale.
+      goalId: a.goalId && (["add_task", "update_task", "update_item"].includes(a.kind) ? aimIds : goalIds).has(a.goalId) ? a.goalId : null,
       itemId: a.itemId && itemIds.has(a.itemId) ? a.itemId : null,
       targetId: a.targetId && itemIds.has(a.targetId) && a.targetId !== a.itemId ? a.targetId : null,
       tags: cleanTags(a.tags),
@@ -326,8 +331,9 @@ export function cleanActions(raw: unknown[], ctx: CommandContext): CommandAction
       switch (a.kind) {
         case "complete_task": case "reopen_task": case "set_task_due": case "update_task": case "delete_task": return !!a.taskId;
         case "update_project": return !!a.projectId;
-        case "add_goal": return !!a.projectId && !!a.title?.trim();
+        case "add_goal": return !!a.title?.trim();
         case "complete_goal": case "reopen_goal": case "delete_goal": return !!a.goalId;
+        case "update_goal": return !!a.goalId && aimIds.has(a.goalId);
         case "capture": return !!a.text?.trim();
         case "add_task": case "create_project": return !!a.title?.trim();
         case "upsert_person": return !!(a.personId || a.name?.trim());

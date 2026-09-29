@@ -102,7 +102,36 @@ export const tasks = sqliteTable("tasks", {
   /** Istante del promemoria (ms), calcolato da due, time e remind o spostato da "+1 ora". */
   remindAt: integer("remind_at"),
   reminded: integer("reminded", { mode: "boolean" }).notNull().default(false),
+  /** Obiettivo personale a cui contribuisce (aims.id), facoltativo. */
+  aimId: text("aim_id"),
 });
+
+/**
+ * Obiettivi personali (non di un progetto): «cambiare lavoro», «correre una mezza maratona».
+ * Diversi dagli obiettivi di progetto (`goals`), che sono una lista di traguardi dentro un progetto.
+ */
+export const aims = sqliteTable("aims", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  status: text("status").$type<AimStatus>().notNull().default("active"),
+  /** Entro quando (YYYY-MM-DD), facoltativo. */
+  due: text("due"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  /** Quando è stato raggiunto. */
+  doneAt: integer("done_at", { mode: "timestamp_ms" }),
+});
+export const AIM_STATUSES = ["active", "paused", "done", "dropped"] as const;
+export type AimStatus = (typeof AIM_STATUSES)[number];
+export type Aim = typeof aims.$inferSelect;
+
+/** Elementi della memoria collegati a un obiettivo personale. */
+export const aimItems = sqliteTable(
+  "aim_items",
+  { aimId: text("aim_id").notNull(), itemId: text("item_id").notNull() },
+  (t) => [primaryKey({ columns: [t.aimId, t.itemId] })],
+);
 
 /** File allegati a un elemento (foto, PDF, audio). Il file sta in data/files/<id>. */
 export const attachments = sqliteTable("attachments", {

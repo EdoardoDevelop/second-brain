@@ -3,7 +3,7 @@ import { z } from "zod";
 import { isAuthenticated } from "@/lib/auth";
 import { db, ready } from "@/lib/db";
 import { removeFiles } from "@/lib/files";
-import { aiLog, attachments, chats, embeddings, facts, goals, insights, itemPeople, items, links, people, projects, tasks } from "@/lib/db/schema";
+import { aiLog, aimItems, aims, attachments, chats, embeddings, facts, goals, insights, itemPeople, items, links, people, projects, tasks } from "@/lib/db/schema";
 
 // Stesso formato prodotto da /api/export?format=json. Le date arrivano come stringhe ISO.
 const date = z.coerce.date();
@@ -28,10 +28,17 @@ const Backup = z.object({
     done: z.boolean(), sourceItemId: z.string().nullable(), createdAt: date,
     time: z.string().nullable().default(null), remind: z.number().nullable().default(null),
     remindAt: z.number().nullable().default(null), reminded: z.boolean().default(false),
+    aimId: z.string().nullable().default(null),
   })),
   // Assente nei backup precedenti agli obiettivi.
   goals: z.array(z.object({ id: z.string(), projectId: z.string(), title: z.string(), done: z.boolean(), ord: z.number(), createdAt: date })).default([]),
   chats: z.array(z.object({ id: z.string(), title: z.string(), scope: z.string(), msgs: z.string(), createdAt: date, updatedAt: date })).default([]),
+  // Assenti nei backup precedenti agli obiettivi personali (29/9).
+  aims: z.array(z.object({
+    id: z.string(), title: z.string(), description: z.string().default(""), status: z.enum(["active", "paused", "done", "dropped"]).default("active"),
+    due: z.string().nullable().default(null), createdAt: date, updatedAt: date, doneAt: date.nullable().default(null),
+  })).default([]),
+  aimItems: z.array(z.object({ aimId: z.string(), itemId: z.string() })).default([]),
   facts: z.array(z.object({
     id: z.string(), text: z.string(), source: z.string(), createdAt: date,
     origin: z.enum(["declared", "inferred", "observed"]).default("declared"),
@@ -71,7 +78,7 @@ export async function POST(req: Request) {
 
   // Tutto o niente: se un inserimento fallisce, i dati attuali restano intatti.
   await db.transaction(async (tx) => {
-    for (const t of [itemPeople, links, tasks, goals, items, projects, people, aiLog, attachments, chats, embeddings, insights]) await tx.delete(t);
+    for (const t of [itemPeople, links, tasks, goals, aimItems, aims, items, projects, people, aiLog, attachments, chats, embeddings, insights]) await tx.delete(t);
     // I fatti su di te si sostituiscono solo se il backup li contiene (i backup vecchi non li hanno).
     if (data.facts.length) await tx.delete(facts);
     const chunks = <T,>(rows: T[]) => Array.from({ length: Math.ceil(rows.length / 100) }, (_, i) => rows.slice(i * 100, i * 100 + 100));
@@ -82,6 +89,8 @@ export async function POST(req: Request) {
     for (const c of chunks(data.links)) await tx.insert(links).values(c).onConflictDoNothing();
     for (const c of chunks(data.tasks)) await tx.insert(tasks).values(c);
     for (const c of chunks(data.goals)) await tx.insert(goals).values(c);
+    for (const c of chunks(data.aims)) await tx.insert(aims).values(c);
+    for (const c of chunks(data.aimItems)) await tx.insert(aimItems).values(c).onConflictDoNothing();
     for (const c of chunks(data.chats)) await tx.insert(chats).values(c);
     for (const c of chunks(data.facts)) await tx.insert(facts).values(c);
     for (const c of chunks(data.aiLog)) await tx.insert(aiLog).values(c);

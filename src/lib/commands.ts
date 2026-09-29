@@ -1,7 +1,7 @@
 import "server-only";
 import { eq, inArray, sql } from "drizzle-orm";
 import { db, newId } from "./db";
-import { attachments, facts, goals, itemPeople, items, links, people, projects, tasks } from "./db/schema";
+import { aimItems, aims, attachments, facts, goals, itemPeople, items, links, people, projects, tasks } from "./db/schema";
 import type { CommandAction } from "./ai";
 import { captureText } from "./capture";
 import { isoDay, reminderFields } from "./format";
@@ -25,7 +25,7 @@ export async function executeActions(actions: CommandAction[], origin: "web" | "
         {
           const id = newId("ta");
           await db.insert(tasks).values({
-            id, title: a.title.trim(), projectId: a.projectId, prio: a.prio ?? 2, due: a.due, createdAt: new Date(),
+            id, title: a.title.trim(), projectId: a.projectId, prio: a.prio ?? 2, due: a.due, createdAt: new Date(), aimId: a.goalId?.startsWith("ob") ? a.goalId : null,
             ...reminderFields(a.due, a.time, a.time ? (a.remind ?? 0) : null),
           });
           emit("task.created", { id, title: a.title.trim(), due: a.due, time: a.time, projectId: a.projectId });
@@ -42,6 +42,7 @@ export async function executeActions(actions: CommandAction[], origin: "web" | "
         const patch: Partial<typeof tasks.$inferInsert> = {};
         if (a.title?.trim()) patch.title = a.title.trim();
         if (a.projectId) patch.projectId = a.projectId;
+        if (a.goalId?.startsWith("ob")) patch.aimId = a.goalId;
         if (a.prio != null) patch.prio = a.prio;
         if (a.due) patch.due = a.due;
         if (a.due || a.time || a.remind != null) {
@@ -82,7 +83,13 @@ export async function executeActions(actions: CommandAction[], origin: "web" | "
         break;
       }
       case "add_goal": {
-        if (!a.projectId || !a.title?.trim()) continue;
+        if (!a.title?.trim()) continue;
+        if (!a.projectId) {
+          // Obiettivo personale.
+          const now = new Date();
+          await db.insert(aims).values({ id: newId("ob"), title: a.title.trim(), description: a.description?.trim() ?? "", due: a.due, status: "active", createdAt: now, updatedAt: now });
+          break;
+        }
         const [last] = await db.select({ ord: goals.ord }).from(goals).where(eq(goals.projectId, a.projectId)).orderBy(sql`${goals.ord} desc`).limit(1);
         await db.insert(goals).values({ id: newId("go"), projectId: a.projectId, title: a.title.trim(), ord: (last?.ord ?? -1) + 1, createdAt: new Date() });
         break;
@@ -90,12 +97,26 @@ export async function executeActions(actions: CommandAction[], origin: "web" | "
       case "complete_goal":
       case "reopen_goal":
         if (!a.goalId) continue;
-        await db.update(goals).set({ done: a.kind === "complete_goal" }).where(eq(goals.id, a.goalId));
+        if (a.goalId.startsWith("ob")) {
+          const done = a.kind === "complete_goal";
+          await db.update(aims).set({ status: done ? "done" : "active", doneAt: done ? new Date() : null, updatedAt: new Date() }).where(eq(aims.id, a.goalId));
+        } else await db.update(goals).set({ done: a.kind === "complete_goal" }).where(eq(goals.id, a.goalId));
         break;
       case "delete_goal":
         if (!a.goalId) continue;
-        await db.delete(goals).where(eq(goals.id, a.goalId));
+        if (a.goalId.startsWith("ob")) await deleteAimRows(a.goalId);
+        else await db.delete(goals).where(eq(goals.id, a.goalId));
         break;
+      case "update_goal": {
+        if (!a.goalId) continue;
+        const patch: Partial<typeof aims.$inferInsert> = { updatedAt: new Date() };
+        if (a.title?.trim()) patch.title = a.title.trim();
+        if (a.due) patch.due = a.due;
+        if (a.description?.trim()) patch.description = a.description.trim();
+        if (a.status) patch.status = a.status === "In pausa" ? "paused" : a.status === "Chiuso" ? "dropped" : "active";
+        await db.update(aims).set(patch).where(eq(aims.id, a.goalId));
+        break;
+      }
       case "upsert_person": {
         const fields = { role: a.role, org: a.org, email: a.email };
         const set = Object.fromEntries(Object.entries(fields).filter(([, v]) => v?.trim())) as Record<string, string>;
@@ -124,7 +145,9 @@ export async function executeActions(actions: CommandAction[], origin: "web" | "
           patch.tags = [...new Set([...cur.tags, ...(a.tags ?? [])])].filter((t) => !drop.has(t.toLowerCase()));
         }
         for (const personId of a.addPeople ?? []) await db.insert(itemPeople).values({ itemId: a.itemId, personId }).onConflictDoNothing();
-        if (!Object.keys(patch).length && !a.addPeople?.length) continue;
+        const toAim = a.goalId?.startsWith("ob") ? a.goalId : null;
+        if (toAim) await db.insert(aimItems).values({ aimId: toAim, itemId: a.itemId }).onConflictDoNothing();
+        if (!Object.keys(patch).length && !a.addPeople?.length && !toAim) continue;
         await db.update(items).set({ ...patch, updatedAt: new Date() }).where(eq(items.id, a.itemId));
         break;
       }
@@ -166,6 +189,13 @@ ${a.text.trim()}` : a.text.trim(), updatedAt: new Date() }).where(eq(items.id, a
   return done.length;
 }
 
+/** Elimina un obiettivo personale: attività ed elementi restano, senza obiettivo. */
+export async function deleteAimRows(id: string) {
+  await db.update(tasks).set({ aimId: null }).where(eq(tasks.aimId, id));
+  await db.delete(aimItems).where(eq(aimItems.aimId, id));
+  await db.delete(aims).where(eq(aims.id, id));
+}
+
 /**
  * Unisce `dupId` in `keepId`: il testo si aggiunge in coda, tag, persone, collegamenti, attività e allegati passano
  * all'elemento che resta, il doppione viene archiviato (non cancellato: si può recuperare).
@@ -194,6 +224,10 @@ ${dup.content.trim()}` : "";
   }
   await db.delete(links).where(sql`${links.fromId} = ${dupId} OR ${links.toId} = ${dupId}`);
   await db.update(tasks).set({ sourceItemId: keepId }).where(eq(tasks.sourceItemId, dupId));
+  for (const r of await db.select().from(aimItems).where(eq(aimItems.itemId, dupId))) {
+    await db.insert(aimItems).values({ aimId: r.aimId, itemId: keepId }).onConflictDoNothing();
+  }
+  await db.delete(aimItems).where(eq(aimItems.itemId, dupId));
   await db.update(attachments).set({ itemId: keepId }).where(eq(attachments.itemId, dupId));
   await db.update(items).set({ status: "archived", updatedAt: new Date() }).where(eq(items.id, dupId));
   return true;

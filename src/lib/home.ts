@@ -14,7 +14,7 @@ export const WIDGETS = {
   knowledge: { title: "Conoscenza recente", href: "/conoscenza", desc: "Gli ultimi elementi in memoria." },
   people: { title: "Persone", href: "/persone", desc: "Le persone della tua memoria." },
   agenda: { title: "Agenda di oggi", href: "/attivita", desc: "Attività di oggi con orario e promemoria." },
-  goals: { title: "Obiettivi aperti", href: "/progetti", desc: "Gli obiettivi da raggiungere, per progetto." },
+  goals: { title: "Obiettivi aperti", href: "/obiettivi", desc: "I tuoi obiettivi personali e quelli dei progetti." },
   favorites: { title: "Preferiti", href: "/conoscenza", desc: "Gli elementi segnati con la stella." },
   chats: { title: "Conversazioni recenti", href: "/assistente", desc: "Le ultime conversazioni con l'Assistente." },
 } as const;

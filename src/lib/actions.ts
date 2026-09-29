@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { eq, gte, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db, newId, ready } from "./db";
+import { aimItems, aims, AIM_STATUSES, type AimStatus } from "./db/schema";
 import { aiLog, aiUsage, apiKeys, attachments, backgrounds, chats, embeddings, facts, goals, insights, itemPeople, items, links, people, projects, pushSubs, tasks, webhooks, type ItemKind, type Proposal } from "./db/schema";
 import { aiEnabled, categorizeFacts, classify, contextNames, quickCommand, transcribe, manualProposal, runItemAction, type AiActionKind, type AiActionResult, type CommandAction, type CommandContext, type CommandResult } from "./ai";
 import { endSession, requireAuth } from "./auth";
@@ -22,7 +23,7 @@ import { generateInsights, morningBrief } from "./proactive";
 import { parseLook, type Look } from "./theme";
 import { FILE_ERROR, log, processAttachment, propose, reindexSoon } from "./pipeline";
 import { removeFiles } from "./files";
-import { executeActions } from "./commands";
+import { deleteAimRows, executeActions } from "./commands";
 import { deliver, emit, WEBHOOK_EVENTS } from "./webhooks";
 import { createApiKey } from "./api-keys";
 import { randomBytes } from "node:crypto";
@@ -253,7 +254,7 @@ export async function setTaskDue(id: string, due: string | null) {
   refreshAll();
 }
 
-export type TaskInput = { title: string; projectId: string | null; prio: number; due: string | null; time?: string | null; remind?: number | null };
+export type TaskInput = { title: string; projectId: string | null; prio: number; due: string | null; time?: string | null; remind?: number | null; aimId?: string | null };
 
 export async function updateTask(id: string, t: TaskInput) {
   await guard();
@@ -261,6 +262,7 @@ export async function updateTask(id: string, t: TaskInput) {
   const due = t.due && /^\d{4}-\d{2}-\d{2}$/.test(t.due) ? t.due : null;
   await db.update(tasks).set({
     title: t.title.trim(), projectId: t.projectId || null, prio: Math.max(1, Math.min(3, Math.round(t.prio) || 2)), due,
+    ...(t.aimId !== undefined ? { aimId: t.aimId || null } : {}),
     ...reminderFields(due, t.time ?? null, t.remind ?? null),
   }).where(eq(tasks.id, id));
   refreshAll();
@@ -269,6 +271,70 @@ export async function updateTask(id: string, t: TaskInput) {
 export async function deleteTask(id: string) {
   await guard();
   await db.delete(tasks).where(eq(tasks.id, id));
+  refreshAll();
+}
+
+// ——— Obiettivi personali ———
+
+export type AimInput = { title: string; description: string; due: string | null; status: AimStatus };
+const validDay = (d: string | null | undefined) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null);
+
+/** Crea o modifica un obiettivo personale; restituisce l'id. */
+export async function saveAim(id: string | null, a: AimInput): Promise<string> {
+  await guard();
+  const now = new Date();
+  const status = (AIM_STATUSES as readonly string[]).includes(a.status) ? a.status : "active";
+  const values = { title: a.title.trim().slice(0, 200) || "Senza titolo", description: a.description.trim().slice(0, 2000), due: validDay(a.due), status, updatedAt: now };
+  if (id) {
+    const [cur] = await db.select({ status: aims.status, doneAt: aims.doneAt }).from(aims).where(eq(aims.id, id));
+    if (!cur) return id;
+    await db.update(aims).set({ ...values, doneAt: status === "done" ? cur.doneAt ?? now : null }).where(eq(aims.id, id));
+    if (cur.status !== status && status === "done") await log("Obiettivo raggiunto", null, values.title);
+  } else {
+    id = newId("ob");
+    await db.insert(aims).values({ id, ...values, createdAt: now, doneAt: status === "done" ? now : null });
+    await log("Nuovo obiettivo personale", null, values.title);
+  }
+  refreshAll();
+  return id;
+}
+
+export async function setAimStatus(id: string, status: AimStatus) {
+  await guard();
+  if (!(AIM_STATUSES as readonly string[]).includes(status)) return;
+  const [cur] = await db.select().from(aims).where(eq(aims.id, id));
+  if (!cur || cur.status === status) return;
+  await db.update(aims).set({ status, updatedAt: new Date(), doneAt: status === "done" ? new Date() : null }).where(eq(aims.id, id));
+  if (status === "done") await log("Obiettivo raggiunto", null, cur.title);
+  refreshAll();
+}
+
+/** Elimina l'obiettivo; attività ed elementi collegati restano. */
+export async function deleteAim(id: string) {
+  await guard();
+  await deleteAimRows(id);
+  refreshAll();
+}
+
+/** Collega (on = true) o scollega un elemento della memoria da un obiettivo personale. */
+export async function linkAimItem(aimId: string, itemId: string, on: boolean) {
+  await guard();
+  if (on) {
+    const [[a], [i]] = await Promise.all([
+      db.select({ id: aims.id }).from(aims).where(eq(aims.id, aimId)),
+      db.select({ id: items.id }).from(items).where(eq(items.id, itemId)),
+    ]);
+    if (a && i) await db.insert(aimItems).values({ aimId, itemId }).onConflictDoNothing();
+  } else await db.delete(aimItems).where(sql`${aimItems.aimId} = ${aimId} AND ${aimItems.itemId} = ${itemId}`);
+  refreshAll();
+}
+
+export async function addAimTask(aimId: string, title: string, due: string | null = null) {
+  await guard();
+  if (!title.trim()) return;
+  const id = newId("ta");
+  await db.insert(tasks).values({ id, title: title.trim(), prio: 2, due: validDay(due), aimId, createdAt: new Date() });
+  emit("task.created", { id, title: title.trim(), due: validDay(due), time: null, projectId: null });
   refreshAll();
 }
 
@@ -398,7 +464,7 @@ export async function generateBrief(kind: "project" | "person", id: string): Pro
 function commandNames(ctx: CommandContext): Record<string, string> {
   return Object.fromEntries([
     ...[...ctx.projects, ...ctx.people].map((x) => [x.id, x.name]),
-    ...[...ctx.tasks, ...ctx.items, ...ctx.goals].map((x) => [x.id, x.title]),
+    ...[...ctx.tasks, ...ctx.items, ...ctx.goals, ...ctx.aims].map((x) => [x.id, x.title]),
   ]);
 }
 
@@ -1019,7 +1085,7 @@ export async function deleteAllData(confirmText: string) {
   if (confirmText !== "ELIMINA") return;
   await removeAttachments();
   // I fatti su di te restano, come il profilo e le impostazioni; impronte e suggerimenti seguono i dati.
-  for (const t of [itemPeople, links, tasks, goals, items, projects, people, aiLog, chats, embeddings, insights]) await db.delete(t);
+  for (const t of [itemPeople, links, tasks, goals, aimItems, aims, items, projects, people, aiLog, chats, embeddings, insights]) await db.delete(t);
   await log("Tutti i dati eliminati", null, "Eseguita");
   refreshAll();
   redirect("/");

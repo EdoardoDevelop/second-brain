@@ -7,13 +7,13 @@ import { TaskCheck } from "@/components/TaskCheck";
 import { addTask, deleteTask, setTaskDue, updateTask } from "@/lib/actions";
 import { REMIND_OPTIONS, type DueGroup } from "@/lib/format";
 
-type T = { id: string; title: string; done: boolean; prio: number; due: string | null; time: string | null; remind: number | null; group: DueGroup; label: string; projectId: string | null; project: string | null; srcId: string | null; src: string | null };
+type T = { id: string; title: string; done: boolean; prio: number; due: string | null; time: string | null; remind: number | null; group: DueGroup; label: string; projectId: string | null; project: string | null; srcId: string | null; src: string | null; aimId: string | null; aim: string | null };
 
 const GROUPS: [DueGroup, string][] = [["overdue", "Scadute"], ["today", "Oggi"], ["week", "Questa settimana"], ["later", "Più avanti"], ["none", "Senza scadenza"]];
 const FILTERS = ["Aperte", "Oggi", "Completate", "Tutte"] as const;
 const PRIO = ["", "Bassa", "Media", "Alta"];
 
-export function TasksView({ tasks, projects }: { tasks: T[]; projects: { id: string; name: string }[] }) {
+export function TasksView({ tasks, projects, aims }: { tasks: T[]; projects: { id: string; name: string }[]; aims: { id: string; title: string }[] }) {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("Aperte");
   const [editing, setEditing] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -66,12 +66,17 @@ export function TasksView({ tasks, projects }: { tasks: T[]; projects: { id: str
                 <span className="muted" style={{ fontSize: 13 }}>{list.length}</span>
               </div>
               {list.map((t) => editing === t.id ? (
-                <TaskEditor key={t.id} task={t} projects={projects} onClose={() => setEditing(null)} />
+                <TaskEditor key={t.id} task={t} projects={projects} aims={aims} onClose={() => setEditing(null)} />
               ) : (
                 <div key={t.id} className="row-hover task-row" style={{ display: "grid", gridTemplateColumns: "18px minmax(0,1fr) 150px 70px 130px 28px", gap: 16, alignItems: "center", padding: "12px 10px", borderTop: "1px solid var(--color-divider)" }}>
                   <span className="tr-check" style={{ display: "flex" }}><TaskCheck id={t.id} done={t.done} size={18} /></span>
                   <div className="tr-main" style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
                     <span onClick={() => setEditing(t.id)} title="Modifica" style={{ fontSize: 15, cursor: "text", textDecoration: t.done ? "line-through" : "none", color: t.done ? "var(--muted)" : "var(--color-text)" }}>{t.title}</span>
+                    {t.aimId && t.aim && (
+                      <Link href={`/obiettivi/${t.aimId}`} className="muted" style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, textDecoration: "none" }}>
+                        <Icon name="target" size={12} />per {t.aim}
+                      </Link>
+                    )}
                     {t.srcId && (
                       <Link href={`/conoscenza/${t.srcId}`} className="muted" style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, textDecoration: "none" }}>
                         <Icon name="link" size={12} />da {t.src}
@@ -117,12 +122,16 @@ function Bell() {
   );
 }
 
-export type EditableTask = Pick<T, "id" | "title" | "prio" | "due" | "time" | "remind" | "projectId">;
+export type EditableTask = Pick<T, "id" | "title" | "prio" | "due" | "time" | "remind" | "projectId"> & { aimId?: string | null };
 
-/** Editor in linea di un'attività (titolo, progetto, priorità, scadenza, orario, promemoria, elimina). Usato anche nel dettaglio del progetto. */
-export function TaskEditor({ task, projects, onClose }: { task: EditableTask; projects: { id: string; name: string }[]; onClose: () => void }) {
+/**
+ * Editor in linea di un'attività (titolo, progetto, obiettivo, priorità, scadenza, orario, promemoria, elimina).
+ * Usato anche nel dettaglio del progetto e dell'obiettivo; senza `aims` l'obiettivo non si mostra e non cambia.
+ */
+export function TaskEditor({ task, projects, aims, onClose }: { task: EditableTask; projects: { id: string; name: string }[]; aims?: { id: string; title: string }[]; onClose: () => void }) {
   const [title, setTitle] = useState(task.title);
   const [projectId, setProjectId] = useState(task.projectId ?? "");
+  const [aimId, setAimId] = useState(task.aimId ?? "");
   const [prio, setPrio] = useState(task.prio);
   const [due, setDue] = useState(task.due ?? "");
   const [time, setTime] = useState(task.time ?? "");
@@ -131,7 +140,7 @@ export function TaskEditor({ task, projects, onClose }: { task: EditableTask; pr
   const [pending, start] = useTransition();
   const save = () => {
     if (!title.trim()) return;
-    start(async () => { await updateTask(task.id, { title, projectId: projectId || null, prio, due: due || null, time: due && time ? time : null, remind: due && time && remind !== "" ? Number(remind) : null }); onClose(); });
+    start(async () => { await updateTask(task.id, { title, projectId: projectId || null, prio, due: due || null, time: due && time ? time : null, remind: due && time && remind !== "" ? Number(remind) : null, ...(aims ? { aimId: aimId || null } : {}) }); onClose(); });
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: 14, borderTop: "1px solid var(--color-divider)", background: "var(--raised)", animation: "sbIn .15s ease" }}>
@@ -144,6 +153,15 @@ export function TaskEditor({ task, projects, onClose }: { task: EditableTask; pr
             {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </label>
+        {aims && (aims.length > 0 || aimId) && (
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, flex: "1 1 200px" }}>
+            <span className="muted">Obiettivo</span>
+            <select className="input" value={aimId} onChange={(e) => setAimId(e.target.value)}>
+              <option value="">Nessun obiettivo</option>
+              {aims.map((a) => <option key={a.id} value={a.id}>{a.title}</option>)}
+            </select>
+          </label>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
           <span className="muted">Priorità</span>
           <div className="seg-sb">

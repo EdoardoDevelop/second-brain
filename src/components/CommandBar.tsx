@@ -6,7 +6,7 @@ import type { IconName } from "@/lib/icons";
 import { addFact, interpret, runCommand } from "@/lib/actions";
 import type { ProposedFact } from "@/lib/chat";
 import type { ActionKind, CommandAction } from "@/lib/ai";
-import { dueInfo } from "@/lib/format";
+import { dueInfo, dueLabel } from "@/lib/format";
 import { useRecorder } from "./useRecorder";
 import { CommandHelpButton } from "./CommandHelp";
 import { VoiceStage } from "./VoiceStage";
@@ -25,6 +25,7 @@ export const KIND: Record<ActionKind, [string, IconName]> = {
   complete_goal: ["Obiettivo raggiunto", "check"],
   reopen_goal: ["Riapri obiettivo", "refresh"],
   delete_goal: ["Elimina obiettivo", "trash"],
+  update_goal: ["Modifica obiettivo", "target"],
   upsert_person: ["Persona", "user"],
   update_item: ["Modifica elemento", "edit"],
   append_item: ["Aggiungi all'elemento", "note"],
@@ -207,7 +208,10 @@ export function ActionCard({ a, names, onChange }: { a: CommandAction & { on: bo
   const input = { className: "input", style: { height: 32, fontSize: 14 } };
   const facts: string[] = [];
   if (a.taskId) facts.push(names[a.taskId] ?? a.taskId);
-  if (a.goalId) facts.push(names[a.goalId] ?? a.goalId);
+  const aimLink = a.kind === "add_task" || a.kind === "update_task" || a.kind === "update_item";
+  if (a.goalId) facts.push((aimLink ? "Per l'obiettivo: " : "") + (names[a.goalId] ?? a.goalId));
+  if (a.kind === "add_goal" && !a.projectId) facts.push("Obiettivo personale");
+  if ((a.kind === "add_goal" || a.kind === "update_goal") && a.due) facts.push("Entro: " + dueLabel(a.due));
   if (a.itemId) facts.push(names[a.itemId] ?? a.itemId);
   if (a.targetId) facts.push((a.kind === "merge_items" ? "← unisce e archivia " : "↔ ") + (names[a.targetId] ?? a.targetId));
   if (a.reason) facts.push((a.conflict ? "In conflitto: " : "Motivo: ") + a.reason);
@@ -223,7 +227,7 @@ export function ActionCard({ a, names, onChange }: { a: CommandAction & { on: bo
   if (a.removeTags?.length) facts.push("Togli tag: " + a.removeTags.map((t) => "#" + t).join(" "));
   if (a.addPeople?.length) facts.push("Collega: " + a.addPeople.map((id) => names[id] ?? id).join(", "));
   if (a.projectId && a.kind !== "update_project") facts.push("Progetto: " + (names[a.projectId] ?? a.projectId));
-  if (a.status) facts.push("Stato: " + a.status);
+  if (a.status) facts.push("Stato: " + (a.kind === "update_goal" ? ({ Attivo: "attivo", "In pausa": "in pausa", Chiuso: "abbandonato" } as Record<string, string>)[a.status] ?? a.status : a.status));
   if (a.pct != null) facts.push(`Avanzamento: ${a.pct}%`);
   if (a.next) facts.push("Milestone: " + a.next);
   if (a.description) facts.push(a.description);

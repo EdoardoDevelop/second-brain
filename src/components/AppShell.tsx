@@ -15,6 +15,7 @@ const NAV: [string, string, IconName][] = [
   ["/inbox", "Inbox", "inbox"],
   ["/conoscenza", "Conoscenza", "book"],
   ["/progetti", "Progetti", "folder"],
+  ["/obiettivi", "Obiettivi", "target"],
   ["/persone", "Persone", "users"],
   ["/attivita", "Attività", "tasks"],
   ["/timeline", "Timeline", "timeline"],

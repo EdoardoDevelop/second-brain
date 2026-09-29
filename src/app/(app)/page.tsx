@@ -4,8 +4,8 @@ import { Icon, itemIcon, KIND_ICON } from "@/components/ui";
 import { TaskCheck } from "@/components/TaskCheck";
 import { loadDemoData } from "@/lib/actions";
 import { db } from "@/lib/db";
-import { chats, goals as goalsTable } from "@/lib/db/schema";
-import { dueInfo, greeting, headerDate, initials, isoDay, relTime, shortDate } from "@/lib/format";
+import { aims as aimsTable, chats, goals as goalsTable } from "@/lib/db/schema";
+import { dueInfo, dueLabel, greeting, headerDate, initials, isoDay, relTime, shortDate } from "@/lib/format";
 import { parseHome, type WidgetId } from "@/lib/home";
 import { getInbox, getMemory, getPeople, getProjects, getTasks } from "@/lib/queries";
 import { getProfile, getSetting } from "@/lib/settings";
@@ -69,8 +69,9 @@ export default async function Home() {
   const layout = parseHome(layoutRaw);
   const shown = new Set(layout.widgets.filter((w) => !w.hidden).map((w) => w.id));
   // I dati dei riquadri nuovi si leggono solo se sono visibili.
-  const [openGoals, recentChats] = await Promise.all([
+  const [openGoals, openAims, recentChats] = await Promise.all([
     shown.has("goals") ? db.select().from(goalsTable).where(eq(goalsTable.done, false)).orderBy(goalsTable.ord) : [],
+    shown.has("goals") ? db.select().from(aimsTable).where(eq(aimsTable.status, "active")).orderBy(aimsTable.due) : [],
     shown.has("chats") ? db.select({ id: chats.id, title: chats.title, updatedAt: chats.updatedAt }).from(chats).orderBy(desc(chats.updatedAt)).limit(5) : [],
   ]);
 
@@ -176,7 +177,15 @@ export default async function Home() {
       t.due! < today ? "var(--danger)" : "var(--color-text)",
     )) : <Empty text="Niente in programma per oggi." />,
 
-    goals: openGoals.length ? openGoals.slice(0, 6).map((g) => (
+    goals: openGoals.length || openAims.length ? [...openAims.slice(0, 4).map((a) => (
+      <Link key={a.id} href={`/obiettivi/${a.id}`} className="list-btn" style={{ gridTemplateColumns: "18px minmax(0,1fr)", alignItems: "start", padding: "9px 0" }}>
+        <span style={{ color: "var(--color-accent)", paddingTop: 2 }}><Icon name="target" size={16} /></span>
+        <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+          <span style={{ fontSize: 14 }}>{a.title}</span>
+          <span className="muted" style={{ fontSize: 12 }}>Personale{a.due ? ` · entro ${dueLabel(a.due).toLowerCase()}` : ""}</span>
+        </span>
+      </Link>
+    )), ...openGoals.slice(0, Math.max(2, 6 - Math.min(openAims.length, 4))).map((g) => (
       <Link key={g.id} href={`/progetti/${g.projectId}`} className="list-btn" style={{ gridTemplateColumns: "18px minmax(0,1fr)", alignItems: "start", padding: "9px 0" }}>
         <span style={{ color: "var(--color-accent)", paddingTop: 2 }}><Icon name="target" size={16} /></span>
         <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
@@ -184,7 +193,7 @@ export default async function Home() {
           <span className="muted" style={{ fontSize: 12 }}>{projName.get(g.projectId) ?? "Progetto"}</span>
         </span>
       </Link>
-    )) : <Empty text="Nessun obiettivo aperto. Aggiungili dalla pagina di un progetto." />,
+    ))] : <Empty text="Nessun obiettivo aperto. Creane uno in Obiettivi o dalla pagina di un progetto." />,
 
     favorites: favorites.length ? favorites.map((k) => (
       <Link key={k.id} href={`/conoscenza/${k.id}`} className="list-btn" style={{ gridTemplateColumns: "18px minmax(0,1fr)", alignItems: "center", padding: "10px 0" }}>
