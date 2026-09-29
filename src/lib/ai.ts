@@ -3,7 +3,7 @@ import { z } from "zod";
 import { eq, ne } from "drizzle-orm";
 import type { ProposedFact } from "./chat";
 import { db } from "./db";
-import { facts, ITEM_TYPES, people, projects, type Proposal } from "./db/schema";
+import { FACT_CATEGORIES, facts, ITEM_TYPES, people, projects, type FactCategory, type Proposal } from "./db/schema";
 import { callJSON, callLLM } from "./llm";
 import { getAiConfig, type AiTier } from "./settings";
 
@@ -191,12 +191,32 @@ Trasforma la richiesta in azioni. Verranno mostrate all'utente, che le conferma:
 - Collegare, assegnare o spostare un elemento in un progetto ("collega il documento X al progetto Y") è update_item con itemId e projectId. Collegare una persona a un elemento è update_item con addPeople. Non usare link_items per progetti o persone.
 Usa solo id presenti nel contesto. Se un riferimento è ambiguo o manca, scegli capture con il testo originale.`;
 
+export const FACT_CATEGORY_HELP = "personale: vita privata, famiglia, casa, salute, luoghi · lavoro: impiego, ruolo, aziende, competenze, progetti professionali · persone: chi è una persona specifica per l'utente (colleghi, amici, parenti) · preferenze: gusti, abitudini, strumenti e modi di lavorare preferiti";
+
+/** Classifica nei gruppi del Memory Inspector i fatti che non hanno ancora una categoria (modello veloce). */
+export async function categorizeFacts(list: { id: string; text: string }[]): Promise<{ id: string; category: FactCategory }[]> {
+  if (!list.length) return [];
+  const Schema = z.object({ facts: z.array(z.object({ id: z.string(), category: z.enum(FACT_CATEGORIES) })) });
+  const out = await callJSON<z.infer<typeof Schema>>({
+    tier: "fast", task: "categorie_fatti", name: "categorie_fatti", maxTokens: 1500, temperature: 0, persona: false,
+    messages: [
+      { role: "system", content: `Assegna a ogni fatto sull'utente una categoria. ${FACT_CATEGORY_HELP}.` },
+      { role: "user", content: JSON.stringify(list) },
+    ],
+    jsonSchema: z.toJSONSchema(Schema),
+    parse: (v) => Schema.safeParse(v) as { success: true; data: z.infer<typeof Schema> } | { success: false },
+  });
+  const ids = new Set(list.map((f) => f.id));
+  return out.facts.filter((f) => ids.has(f.id));
+}
+
 const QuickSchema = z.object({
   question: z.boolean().describe("true se la richiesta è (anche) una domanda o chiede di cercare, riassumere, spiegare o ragionare sulla memoria; false se è solo un comando o un'informazione da archiviare"),
   actions: z.array(CommandActionSchema).describe("Azioni da proporre, nell'ordine; vuoto se è solo una domanda"),
   facts: z.array(z.object({
     text: z.string().describe("Il fatto, in terza persona e breve"),
     replaces: z.array(z.string()).describe("id dei fatti già noti che questo rende non più veri (es. un nuovo lavoro sostituisce il vecchio); vuoto se nessuno"),
+    category: z.enum(FACT_CATEGORIES).describe(FACT_CATEGORY_HELP),
   })).describe("Fatti stabili che l'utente racconta su di sé e che conviene ricordare (lavoro, ruolo, persone della sua vita e che cosa sono per lui, preferenze, abitudini), es. «Dal 19 ottobre 2026 lavora in Easytech», «Diego Bernardi è un ex collega di ComputerRivo e futuro collega in Easytech». Mai quelli già noti né cose passeggere. Vuoto se non ce ne sono."),
 });
 
@@ -234,7 +254,7 @@ ${text}
     const text = f.text.replace(/\s+/g, " ").trim().slice(0, 300);
     if (text.length <= 3 || lower.has(text.toLowerCase()) || seen.has(text.toLowerCase())) continue;
     seen.add(text.toLowerCase());
-    newFacts.push({ text, replaces: [...new Set(f.replaces)].filter((id) => byId.has(id)).map((id) => ({ id, text: byId.get(id)! })) });
+    newFacts.push({ text, category: f.category, replaces: [...new Set(f.replaces)].filter((id) => byId.has(id)).map((id) => ({ id, text: byId.get(id)! })) });
     if (newFacts.length >= 4) break;
   }
   return { question: out.question, actions: out.question ? [] : cleanActions(out.actions, ctx), facts: newFacts };

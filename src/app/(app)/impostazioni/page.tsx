@@ -5,7 +5,8 @@ import { db, ready } from "@/lib/db";
 import { aiLog, apiKeys, backgrounds, items, people, projects, pushSubs, tasks, webhooks } from "@/lib/db/schema";
 import { getNotifyPrefs } from "@/lib/push";
 import { NotifySettings } from "./NotifySettings";
-import { FactsEditor, ProfileSettings } from "./ProfileSettings";
+import { ProfileSettings } from "./ProfileSettings";
+import Link from "next/link";
 import { SetCard, SettingsShell, type SettingsSection } from "./SettingsShell";
 import { IntegrationsSettings } from "./IntegrationsSettings";
 import { clock, shortDate } from "@/lib/format";
@@ -49,8 +50,8 @@ export default async function SettingsPage() {
       content: (
         <>
           <SetCard title="Chi sei" icon="user"><ProfileSettings initial={profile} /></SetCard>
-          <SetCard title="Cosa l'IA sa di te" icon="ai" desc="Fatti stabili che l'IA usa in ogni conversazione, con da dove vengono e da quando valgono. Li propone lei quando le racconti qualcosa di te e li salva solo se confermi; se qualcosa cambia (es. un nuovo lavoro) il fatto vecchio resta come storia. Clic su un fatto per correggerlo.">
-            <FactsEditor />
+          <SetCard title="Cosa l'IA sa di te" icon="ai" desc="I fatti su di te che l'IA usa in ogni conversazione, con da dove vengono, da quando valgono e cosa è da verificare, più le persone che conosce.">
+            <Link href="/memoria" className="btn btn-secondary" style={{ alignSelf: "flex-start", gap: 6 }}>Apri «Cosa so di te»<Icon name="arrowR" size={14} /></Link>
           </SetCard>
         </>
       ),

@@ -291,7 +291,7 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
                           {f.state === "review" && (
                             <>
                               <button className="btn btn-ghost" onClick={() => patchAt(i, (r) => ({ facts: r.facts!.map((x, h) => (h === k ? { ...x, state: "discarded" } : x)) }))}>No</button>
-                              <button className="btn btn-primary" onClick={() => { addFact(f.text, "chat", { sourceRef: chatRef.current, replaces: (f.replaces ?? []).map((r) => r.id) }); patchAt(i, (r) => ({ facts: r.facts!.map((x, h) => (h === k ? { ...x, state: "saved" } : x)) })); }}>Ricorda</button>
+                              <button className="btn btn-primary" onClick={() => { addFact(f.text, "chat", { sourceRef: chatRef.current, replaces: (f.replaces ?? []).map((r) => r.id), category: f.category }); patchAt(i, (r) => ({ facts: r.facts!.map((x, h) => (h === k ? { ...x, state: "saved" } : x)) })); }}>Ricorda</button>
                             </>
                           )}
                         </div>

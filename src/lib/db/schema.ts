@@ -232,7 +232,11 @@ export const facts = sqliteTable("facts", {
   lastConfirmedAt: integer("last_confirmed_at", { mode: "timestamp_ms" }),
   /** Fatto che lo ha sostituito (es. il nuovo lavoro). */
   supersededBy: text("superseded_by"),
+  /** Gruppo nel Memory Inspector; null = da classificare (lo fa l'IA all'apertura della pagina). */
+  category: text("category").$type<FactCategory>(),
 });
+export const FACT_CATEGORIES = ["personale", "lavoro", "persone", "preferenze"] as const;
+export type FactCategory = (typeof FACT_CATEGORIES)[number];
 export type FactOrigin = "declared" | "inferred" | "observed";
 export type FactStatus = "confirmed" | "pending" | "obsolete" | "conflict";
 

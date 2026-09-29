@@ -1,6 +1,6 @@
 // Tipi dell'Assistente condivisi tra server (route /api/ask, conversazioni salvate) e client.
 import type { CommandAction } from "./ai";
-import type { ItemKind } from "./db/schema";
+import type { FactCategory, ItemKind } from "./db/schema";
 
 export type Source = { id: string; title: string; type: string | null; kind: ItemKind; date: string };
 
@@ -21,7 +21,7 @@ export type ChatAnswer = {
 
 /** Fatto sull'utente proposto dall'IA, da confermare. */
 /** Fatto proposto dall'IA: se contraddice fatti già noti, `replaces` li indica (confermando diventano storia). */
-export type ProposedFact = { text: string; replaces: { id: string; text: string }[] };
+export type ProposedFact = { text: string; replaces: { id: string; text: string }[]; category?: FactCategory | null };
 export type FactCard = ProposedFact & { state: "review" | "saved" | "discarded" };
 /** Formato delle risposte salvate prima dello streaming (27/9). */
 export type LegacyAnswer = { paragraphs: string[]; list: string[]; after: string; note: string; sources: Source[]; read: number };

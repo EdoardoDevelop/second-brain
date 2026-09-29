@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { eq, gte, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db, newId, ready } from "./db";
 import { aiLog, aiUsage, apiKeys, attachments, backgrounds, chats, embeddings, facts, goals, insights, itemPeople, items, links, people, projects, pushSubs, tasks, webhooks, type ItemKind, type Proposal } from "./db/schema";
-import { aiEnabled, classify, contextNames, quickCommand, transcribe, manualProposal, runItemAction, type AiActionKind, type AiActionResult, type CommandAction, type CommandContext, type CommandResult } from "./ai";
+import { aiEnabled, categorizeFacts, classify, contextNames, quickCommand, transcribe, manualProposal, runItemAction, type AiActionKind, type AiActionResult, type CommandAction, type CommandContext, type CommandResult } from "./ai";
 import { endSession, requireAuth } from "./auth";
 import { commandContext, memoryContext } from "./queries";
 import { isoDay, reminderFields } from "./format";
@@ -16,7 +16,7 @@ import { runAgent } from "./agent";
 import { budgetState, EUR_PER_USD, resetUnavailable } from "./llm";
 import { syncEmbeddings } from "./semantic";
 import { gardenMemory, type GardenStatus } from "./garden";
-import type { FactOrigin, FactStatus } from "./db/schema";
+import { FACT_CATEGORIES, type FactCategory, type FactOrigin, type FactStatus } from "./db/schema";
 import type { ProposedFact } from "./chat";
 import { generateInsights, morningBrief } from "./proactive";
 import { parseLook, type Look } from "./theme";
@@ -494,13 +494,29 @@ export type Fact = {
   origin: FactOrigin; status: FactStatus; confidence: number | null; sourceRef: string | null;
   validFrom: string | null; validUntil: string | null; lastConfirmedAt: number | null;
   supersededBy: { id: string; text: string } | null;
+  category: FactCategory | null;
+  /** Dove è nato, se si può aprire (conversazione o elemento). */
+  sourceLink: { href: string; label: string } | null;
 };
 
 export async function listFacts(): Promise<Fact[]> {
   await guard();
   const rows = await db.select().from(facts).orderBy(sql`${facts.createdAt} desc`);
   const text = new Map(rows.map((f) => [f.id, f.text]));
+  const refs = [...new Set(rows.map((f) => f.sourceRef).filter((r): r is string => !!r))];
+  const [chatRows, itemRows] = refs.length
+    ? await Promise.all([
+      db.select({ id: chats.id, title: chats.title }).from(chats).where(inArray(chats.id, refs)),
+      db.select({ id: items.id, title: items.title }).from(items).where(inArray(items.id, refs)),
+    ])
+    : [[], []];
+  const links = new Map<string, { href: string; label: string }>([
+    ...chatRows.map((c): [string, { href: string; label: string }] => [c.id, { href: `/assistente?chat=${c.id}`, label: `conversazione «${c.title}»` }]),
+    ...itemRows.map((i): [string, { href: string; label: string }] => [i.id, { href: `/conoscenza/${i.id}`, label: `«${i.title}»` }]),
+  ]);
   return rows.map((f) => ({
+    category: f.category ?? null,
+    sourceLink: f.sourceRef ? links.get(f.sourceRef) ?? null : null,
     id: f.id, text: f.text, source: f.source, createdAt: f.createdAt.getTime(),
     origin: f.origin, status: f.status, confidence: f.confidence, sourceRef: f.sourceRef,
     validFrom: f.validFrom, validUntil: f.validUntil, lastConfirmedAt: f.lastConfirmedAt?.getTime() ?? null,
@@ -515,7 +531,7 @@ const dayBefore = (day: string) => isoDay(new Date(Date.parse(day + "T12:00:00Z"
  * Aggiunge un fatto confermato dall'utente (dalla chat, da un comando, da un suggerimento o scritto a mano).
  * `replaces`: fatti che il nuovo rende superati; diventano storia (obsolete, validi fino a ieri, sostituiti da questo).
  */
-export async function addFact(text: string, source = "manuale", opts: { sourceRef?: string | null; replaces?: string[]; origin?: FactOrigin } = {}) {
+export async function addFact(text: string, source = "manuale", opts: { sourceRef?: string | null; replaces?: string[]; origin?: FactOrigin; category?: FactCategory | null } = {}) {
   await guard();
   const t = text.replace(/\s+/g, " ").trim().slice(0, 300);
   if (!t) return;
@@ -527,7 +543,8 @@ export async function addFact(text: string, source = "manuale", opts: { sourceRe
   if (same) await db.update(facts).set({ lastConfirmedAt: now }).where(eq(facts.id, same.id));
   else {
     id = newId("fa");
-    await db.insert(facts).values({ id, text: t, source, createdAt: now, origin: opts.origin ?? "declared", status: "confirmed", sourceRef: opts.sourceRef ?? null, validFrom: today, lastConfirmedAt: now });
+    const category = opts.category && (FACT_CATEGORIES as readonly string[]).includes(opts.category) ? opts.category : null;
+    await db.insert(facts).values({ id, text: t, source, createdAt: now, origin: opts.origin ?? "declared", status: "confirmed", sourceRef: opts.sourceRef ?? null, validFrom: today, lastConfirmedAt: now, category });
   }
   const old = (opts.replaces ?? []).filter((r) => r !== id && active.some((f) => f.id === r));
   if (old.length) await db.update(facts).set({ status: "obsolete", validUntil: dayBefore(today), supersededBy: id }).where(inArray(facts.id, old));
@@ -552,6 +569,38 @@ export async function endFact(id: string) {
   await db.update(facts).set({ status: "obsolete", validUntil: dayBefore(isoDay()) }).where(eq(facts.id, id));
   await log("Fatto non più valido", null, f.text);
   refreshAll();
+}
+
+/** «Confermo»: il fatto è vero (anche se era dedotto o in conflitto) e la data dell'ultima conferma diventa oggi. */
+export async function confirmFact(id: string) {
+  await guard();
+  const [f] = await db.select({ text: facts.text, status: facts.status }).from(facts).where(eq(facts.id, id));
+  if (!f) return;
+  await db.update(facts).set({ status: "confirmed", lastConfirmedAt: new Date(), validUntil: null, supersededBy: null }).where(eq(facts.id, id));
+  if (f.status !== "confirmed") await log("Fatto confermato", null, f.text);
+  refreshAll();
+}
+
+export async function setFactCategory(id: string, category: FactCategory | null) {
+  await guard();
+  await db.update(facts).set({ category: category && (FACT_CATEGORIES as readonly string[]).includes(category) ? category : null }).where(eq(facts.id, id));
+  refreshAll();
+}
+
+/** Dati del Memory Inspector: fatti (quelli senza categoria vengono classificati ora dal modello veloce) e persone. */
+export async function inspectorData() {
+  await guard();
+  const pending = await db.select({ id: facts.id, text: facts.text }).from(facts).where(sql`${facts.category} IS NULL`).limit(60);
+  if (pending.length && (await aiEnabled())) {
+    try {
+      for (const c of await categorizeFacts(pending)) await db.update(facts).set({ category: c.category }).where(eq(facts.id, c.id));
+    } catch { /* restano «da classificare» */ }
+  }
+  const [list, pp] = await Promise.all([
+    listFacts(),
+    db.select({ id: people.id, name: people.name, role: people.role, org: people.org, note: people.note }).from(people).orderBy(people.name),
+  ]);
+  return { facts: list, people: pp };
 }
 
 /** Riporta un fatto superato tra quelli validi (es. chiuso per errore). */

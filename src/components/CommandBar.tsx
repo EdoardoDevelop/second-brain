@@ -84,7 +84,7 @@ export function CommandBar({ onClose, startRecording }: { onClose: () => void; s
   const decideFact = (k: number, keep: boolean) => {
     const f = proposal?.facts[k];
     if (!f) return;
-    if (keep) addFact(f.text, "comando", { replaces: f.replaces.map((r) => r.id) });
+    if (keep) addFact(f.text, "comando", { replaces: f.replaces.map((r) => r.id), category: f.category });
     setProposal((p) => p && { ...p, facts: p.facts.map((x, h) => (h === k ? { ...x, state: keep ? "saved" : "discarded" } : x)) });
   };
 

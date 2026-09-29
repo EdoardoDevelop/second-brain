@@ -1,9 +1,9 @@
 import "server-only";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "./db";
-import { facts as factsTable, itemPeople, items, people, projects, tasks } from "./db/schema";
+import { FACT_CATEGORIES, facts as factsTable, itemPeople, items, people, projects, tasks, type FactCategory } from "./db/schema";
 import type { ProposedFact } from "./chat";
-import { cleanActions, commandActionJsonSchema, type ChatTurn, type CommandAction, type CommandContext } from "./ai";
+import { cleanActions, commandActionJsonSchema, FACT_CATEGORY_HELP, type ChatTurn, type CommandAction, type CommandContext } from "./ai";
 import { summarizeItems, TOOL_BY_NAME } from "./api-core";
 import { isoDay } from "./format";
 import { callLLM, type LlmMessage, type LlmTool } from "./llm";
@@ -75,6 +75,7 @@ function toolDefs(): LlmTool[] {
         properties: {
           fact: { type: "string", description: "Il fatto, in terza persona, breve (es. «Lavora come geometra a Milano»)" },
           replaces: { type: "array", items: { type: "string" }, description: "Testo esatto dei fatti già confermati che questo rende non più veri (es. il lavoro precedente); vuoto se nessuno" },
+          category: { type: "string", enum: [...FACT_CATEGORIES], description: FACT_CATEGORY_HELP },
         },
         required: ["fact"],
       },
@@ -208,7 +209,7 @@ export async function runAgent(o: {
   const read = new Set<string>();
   const steps: string[] = [];
   const proposed: unknown[] = [];
-  const facts: { text: string; replaces: string[] }[] = [];
+  const facts: { text: string; replaces: string[]; category: FactCategory | null }[] = [];
   let cost = 0;
   let model = "";
   let usedTier: AiTier = tier;
@@ -292,13 +293,13 @@ export async function runAgent(o: {
     const find = (x: string) => known.find((k) => norm(k.text) === norm(x)) ?? known.find((k) => norm(k.text).includes(norm(x)) || norm(x).includes(norm(k.text)));
     const seen = new Set<string>();
     proposedFacts = facts.filter((f) => !seen.has(f.text.toLowerCase()) && seen.add(f.text.toLowerCase()) && !known.some((k) => norm(k.text) === norm(f.text)))
-      .map((f) => ({ text: f.text, replaces: [...new Map(f.replaces.map(find).filter((k): k is { id: string; text: string } => !!k).map((k) => [k.id, k])).values()] }));
+      .map((f) => ({ text: f.text, category: f.category, replaces: [...new Map(f.replaces.map(find).filter((k): k is { id: string; text: string } => !!k).map((k) => [k.id, k])).values()] }));
   }
 
   return { text, note, sources, read: read.size, followUps, actions, names, facts: proposedFacts, steps, model, tier: usedTier, cost };
 }
 
-type ToolState = { scope: { within?: Set<string> }; read: Set<string>; titles: Map<string, string>; proposed: unknown[]; facts: { text: string; replaces: string[] }[] };
+type ToolState = { scope: { within?: Set<string> }; read: Set<string>; titles: Map<string, string>; proposed: unknown[]; facts: { text: string; replaces: string[]; category: FactCategory | null }[] };
 
 async function runTool(name: string, args: Record<string, unknown>, st: ToolState): Promise<unknown> {
   if (name === "search_memory") {
@@ -321,7 +322,8 @@ async function runTool(name: string, args: Record<string, unknown>, st: ToolStat
   if (name === "remember_fact") {
     const f = String(args.fact ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
     const replaces = Array.isArray(args.replaces) ? args.replaces.map((x) => String(x).trim()).filter(Boolean).slice(0, 4) : [];
-    if (f) st.facts.push({ text: f, replaces });
+    const category = (FACT_CATEGORIES as readonly string[]).includes(String(args.category)) ? (args.category as FactCategory) : null;
+    if (f) st.facts.push({ text: f, replaces, category });
     return { ok: true, message: "Proposto all'utente, che deciderà se ricordarlo." };
   }
   const tool = TOOL_BY_NAME.get(name);

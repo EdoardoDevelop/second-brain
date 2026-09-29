@@ -20,6 +20,7 @@ const NAV: [string, string, IconName][] = [
   ["/timeline", "Timeline", "timeline"],
   ["/connessioni", "Connessioni", "graph"],
   ["/assistente", "Assistente", "ai"],
+  ["/memoria", "Cosa so di te", "user"],
 ];
 
 const TITLES: Record<string, string> = Object.fromEntries([...NAV.map(([h, l]) => [h, l]), ["/impostazioni", "Impostazioni"]]);

@@ -39,6 +39,7 @@ const Backup = z.object({
     confidence: z.number().nullable().default(null), sourceRef: z.string().nullable().default(null),
     validFrom: z.string().nullable().default(null), validUntil: z.string().nullable().default(null),
     lastConfirmedAt: date.nullable().default(null), supersededBy: z.string().nullable().default(null),
+    category: z.enum(["personale", "lavoro", "persone", "preferenze"]).nullable().default(null),
   })).default([]),
   aiLog: z.array(z.object({ at: date, action: z.string(), itemId: z.string().nullable(), outcome: z.string() })).default([]),
   // Solo i riferimenti: i file restano sul server. Si ricollegano quelli ancora presenti.

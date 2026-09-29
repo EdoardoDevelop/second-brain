@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS embeddings (
 CREATE TABLE IF NOT EXISTS facts (
   id TEXT PRIMARY KEY, text TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manuale', created_at INTEGER NOT NULL,
   origin TEXT NOT NULL DEFAULT 'declared', status TEXT NOT NULL DEFAULT 'confirmed', confidence REAL, source_ref TEXT,
-  valid_from TEXT, valid_until TEXT, last_confirmed_at INTEGER, superseded_by TEXT
+  valid_from TEXT, valid_until TEXT, last_confirmed_at INTEGER, superseded_by TEXT, category TEXT
 );
 -- Suggerimenti dell'IA (Home): azioni proposte da confermare, oppure da ignorare.
 CREATE TABLE IF NOT EXISTS insights (
@@ -130,6 +130,7 @@ const ADD_COLUMNS = [
   "ALTER TABLE facts ADD COLUMN last_confirmed_at INTEGER",
   "ALTER TABLE facts ADD COLUMN superseded_by TEXT",
   "UPDATE facts SET last_confirmed_at = created_at WHERE last_confirmed_at IS NULL",
+  "ALTER TABLE facts ADD COLUMN category TEXT",
 ];
 
 /** Crea le tabelle al primo accesso e aggiunge le colonne mancanti. */
