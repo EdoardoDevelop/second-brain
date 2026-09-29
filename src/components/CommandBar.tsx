@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { overviewHref, overviewTopic } from "@/lib/overview-topic";
 import { Icon } from "@/components/ui";
 import type { IconName } from "@/lib/icons";
 import { addFact, interpret, runCommand } from "@/lib/actions";
@@ -54,13 +56,17 @@ export function CommandBar({ onClose, startRecording }: { onClose: () => void; s
   const [doneCount, setDoneCount] = useState(0);
   const [, start] = useTransition();
 
+  const router = useRouter();
+  const openOverview = (t: string) => { const topic = overviewTopic(t); if (topic) { onClose(); router.push(overviewHref(topic)); } return !!topic; };
   const send = (input: { text?: string; audio?: string }) => {
+    if (input.text && openOverview(input.text)) return;
     setPhase("thinking");
     setVoice(!!input.audio);
     setError(null);
     start(async () => {
       const res = await interpret(input);
       if ("error" in res) { setError(res.error); setPhase("idle"); return; }
+      if (input.audio && openOverview(res.transcript)) return;
       setProposal({ ...res, actions: res.actions.map((a) => ({ ...a, on: true })), facts: res.facts.map((f): Fact => ({ ...f, state: "review" })) });
       if (input.audio) setText(res.transcript);
       setPhase("review");

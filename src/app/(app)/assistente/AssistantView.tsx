@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { overviewHref, overviewTopic } from "@/lib/overview-topic";
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Blueprint, Icon, itemIcon } from "@/components/ui";
 import { ActionCard } from "@/components/CommandBar";
@@ -48,6 +50,7 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
   /** Pagina da cui arriva la domanda (item:<id>, project:<id>, person:<id>). */
   focus?: string;
 }) {
+  const router = useRouter();
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [chatId, setChatId] = useState<string | null>(null);
   const [chats, setChats] = useState<ChatSummary[]>([]);
@@ -146,6 +149,9 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
   async function send(text: string, voice = false, expert = false) {
     const q = text.trim();
     if (!q || thinking) return;
+    // Il quadro completo ha una pagina sua (sezioni, fonti, prossimi passi).
+    const topic = overviewTopic(q);
+    if (topic) { setInput(""); router.push(overviewHref(topic)); return; }
     setInput("");
     const turns = msgsRef.current.flatMap((x): ChatTurn[] => (x.role === "user" ? [{ role: "user", text: x.text }] : x.role === "assistant" ? [{ role: "assistant", text: replyText(x) }] : []));
     const at = msgsRef.current.length + 1;

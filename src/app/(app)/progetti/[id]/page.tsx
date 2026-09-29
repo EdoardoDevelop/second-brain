@@ -6,6 +6,7 @@ import { getProjectDetail, getProjects } from "@/lib/queries";
 import { AddProjectTask, ProjectHeader, ProjectTasks } from "./ProjectClient";
 import { Goals } from "./Goals";
 import { BriefCard } from "@/components/BriefCard";
+import { overviewHref } from "@/lib/overview-topic";
 import type { SavedBrief } from "@/lib/actions";
 import { aiEnabled } from "@/lib/ai";
 import { getSetting } from "@/lib/settings";
@@ -84,6 +85,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         <aside style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ marginBottom: 18 }}>
             <BriefCard kind="project" id={p.id} initial={saved ? (JSON.parse(saved) as SavedBrief) : null} count={docs.length + tasks.length + goals.length} aiOn={aiOn} />
+            {aiOn && <Link href={overviewHref(p.name)} className="btn btn-ghost" style={{ gap: 6, marginTop: 8, color: "var(--accent-text)" }}><Icon name="ai" size={14} />Quadro completo</Link>}
           </div>
           <h4 style={{ margin: 0, fontSize: 20 }}>Timeline</h4>
           {docs.length ? (

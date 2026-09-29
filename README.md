@@ -15,6 +15,7 @@ Web app per un solo utente, usata da computer e telefono (installabile come app)
 | **Barra comandi** | ⌘J (o il pulsante IA/microfono): comandi e domande rapide con lo stesso motore dell'Assistente |
 | **Attività** | Gruppi per scadenza, orari e promemoria con notifica («Fatto», «+1 ora»), modifica ed eliminazione |
 | **Progetti e Persone** | Obiettivi, attività, documenti, persone coinvolte, «Cosa dovresti sapere» e «Relazione in breve» generate dall'IA |
+| **Quadro completo** | «Fammi il quadro completo di X» (Assistente, ⌘J o pulsanti su progetto, persona, obiettivo): stato, decisioni, problemi aperti, persone, contraddizioni e prossimi passi con le fonti; vista derivata, non salvata in memoria |
 | **Obiettivi** | Obiettivi personali (anche fuori dai progetti) con stato e scadenza; attività ed elementi collegati; l'IA li tiene presenti in risposte e suggerimenti e segnala quelli fermi o in scadenza |
 | **Timeline e Connessioni** | Cronologia per giorno; grafo 2D/3D di elementi, progetti, persone e concetti |
 | **Impostazioni** | Profilo e fatti che l'IA sa di te, aspetto (temi, colori, carattere, sfondi), notifiche push, IA (modelli per compito, privacy, spesa del mese con tetto, confronto modelli), integrazioni, registro IA, backup |

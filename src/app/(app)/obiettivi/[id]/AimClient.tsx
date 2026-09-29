@@ -10,6 +10,7 @@ import type { AimStatus, ItemKind, ItemType } from "@/lib/db/schema";
 import { dueInfo, dueLabel as dueText, type DueGroup } from "@/lib/format";
 import { TaskEditor } from "../../attivita/TasksView";
 import { AIM_STATUS } from "../AimsView";
+import { overviewHref } from "@/lib/overview-topic";
 
 type Aim = { id: string; title: string; description: string; status: AimStatus; due: string | null; createdAt: number; doneAt: number | null };
 type Task = { id: string; title: string; done: boolean; prio: number; due: string | null; time: string | null; remind: number | null; projectId: string | null; aimId: string | null; label: string; group: DueGroup };
@@ -93,6 +94,7 @@ export function AimClient({ aim, tasks, items, candidates, projects, aims }: {
             </div>
             <button className="btn btn-secondary" onClick={() => setEditing(true)} style={{ gap: 6, height: 32 }}><Icon name="edit" size={14} />Modifica</button>
             <Link href={`/assistente?q=${encodeURIComponent(ask)}`} className="btn btn-secondary" style={{ gap: 6, height: 32 }}><Icon name="ai" size={14} />Chiedi all&apos;IA</Link>
+            <Link href={overviewHref(aim.title)} className="btn btn-secondary" style={{ gap: 6, height: 32 }}><Icon name="list" size={14} />Quadro completo</Link>
             {confirmDel ? (
               <>
                 <span style={{ fontSize: 13, color: "var(--danger)" }}>Eliminare l&apos;obiettivo? Attività ed elementi restano.</span>

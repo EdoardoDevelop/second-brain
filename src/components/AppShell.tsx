@@ -24,7 +24,7 @@ const NAV: [string, string, IconName][] = [
   ["/memoria", "Cosa so di te", "user"],
 ];
 
-const TITLES: Record<string, string> = Object.fromEntries([...NAV.map(([h, l]) => [h, l]), ["/impostazioni", "Impostazioni"]]);
+const TITLES: Record<string, string> = Object.fromEntries([...NAV.map(([h, l]) => [h, l]), ["/impostazioni", "Impostazioni"], ["/quadro", "Quadro completo"]]);
 
 function section(path: string) {
   if (path === "/") return "/";

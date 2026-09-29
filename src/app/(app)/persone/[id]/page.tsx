@@ -6,6 +6,7 @@ import { initials, longDate, shortDate } from "@/lib/format";
 import { getPersonDetail } from "@/lib/queries";
 import { PersonHeader } from "./PersonHeader";
 import { BriefCard } from "@/components/BriefCard";
+import { overviewHref } from "@/lib/overview-topic";
 import type { SavedBrief } from "@/lib/actions";
 import { aiEnabled } from "@/lib/ai";
 import { getSetting } from "@/lib/settings";
@@ -43,7 +44,10 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
         </div>
       </PersonHeader>
 
-      <BriefCard kind="person" id={p.id} initial={saved ? (JSON.parse(saved) as SavedBrief) : null} count={items.length + (p.note ? 1 : 0)} aiOn={aiOn} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <BriefCard kind="person" id={p.id} initial={saved ? (JSON.parse(saved) as SavedBrief) : null} count={items.length + (p.note ? 1 : 0)} aiOn={aiOn} />
+        {aiOn && <Link href={overviewHref(p.name)} className="btn btn-ghost" style={{ gap: 6, alignSelf: "flex-start", color: "var(--accent-text)" }}><Icon name="ai" size={14} />Quadro completo</Link>}
+      </div>
 
       <section className="stack-mobile" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 240px", gap: 32, padding: "20px 0", borderTop: "1px solid var(--color-divider)", borderBottom: "1px solid var(--color-divider)" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

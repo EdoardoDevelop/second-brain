@@ -24,6 +24,7 @@ import { parseLook, type Look } from "./theme";
 import { FILE_ERROR, log, processAttachment, propose, reindexSoon } from "./pipeline";
 import { removeFiles } from "./files";
 import { deleteAimRows, executeActions } from "./commands";
+import { buildOverview, forgetOverview, type Overview } from "./overview";
 import { deliver, emit, WEBHOOK_EVENTS } from "./webhooks";
 import { createApiKey } from "./api-keys";
 import { randomBytes } from "node:crypto";
@@ -231,10 +232,13 @@ export async function acceptAiAction(id: string, kind: AiActionKind, res: AiActi
 
 // ——— Attività ———
 
-export async function addTask(title: string) {
+/** Nuova attività; dal «quadro completo» anche con il progetto o l'obiettivo di cui parla. */
+export async function addTask(title: string, opts: { projectId?: string | null; aimId?: string | null } = {}) {
   await guard();
   if (!title.trim()) return;
-  await db.insert(tasks).values({ id: newId("ta"), title: title.trim(), prio: 2, createdAt: new Date() });
+  const id = newId("ta");
+  await db.insert(tasks).values({ id, title: title.trim().slice(0, 300), prio: 2, createdAt: new Date(), projectId: opts.projectId || null, aimId: opts.aimId || null });
+  emit("task.created", { id, title: title.trim(), due: null, time: null, projectId: opts.projectId || null });
   refreshAll();
 }
 
@@ -271,6 +275,26 @@ export async function updateTask(id: string, t: TaskInput) {
 export async function deleteTask(id: string) {
   await guard();
   await db.delete(tasks).where(eq(tasks.id, id));
+  refreshAll();
+}
+
+// ——— Quadro completo (vista derivata, non salvata in memoria) ———
+
+export async function makeOverview(topic: string): Promise<Overview | { error: string }> {
+  await guard();
+  const t = topic.replace(/\s+/g, " ").trim().slice(0, 120);
+  if (!t) return { error: "Di quale argomento vuoi il quadro?" };
+  if (!(await aiEnabled())) return { error: "Imposta la chiave OpenRouter nelle Impostazioni." };
+  try {
+    return await buildOverview(t);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Errore dell'IA." };
+  }
+}
+
+export async function removeOverview(topic: string) {
+  await guard();
+  await forgetOverview(topic);
   refreshAll();
 }
 

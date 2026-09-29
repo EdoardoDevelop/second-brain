@@ -534,3 +534,13 @@ a.cite:hover { background: var(--color-accent); color: var(--color-bg); }
 .ins-why { margin: 0; padding: 8px 10px 8px 24px; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; line-height: 1.45; background: var(--raised); border-left: 2px solid var(--color-accent); }
 .ins-why a { color: inherit; text-decoration: underline; text-decoration-color: var(--color-divider); text-underline-offset: 2px; }
 .ins-why a:hover { text-decoration-color: currentColor; }
+
+/* ——— Quadro completo ——— */
+.ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 22px 36px; }
+.ov-sec { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ov-sec > p { margin: 0; font-size: 15px; line-height: 1.55; text-wrap: pretty; }
+.ov-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 15px; line-height: 1.5; }
+.ov-refs { margin-left: 4px; white-space: nowrap; }
+.ov-sources { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.ov-sources a { color: var(--color-text); text-decoration: none; }
+.ov-sources a:hover { color: var(--accent-text); }
