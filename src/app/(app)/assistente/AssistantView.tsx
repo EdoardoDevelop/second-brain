@@ -9,7 +9,8 @@ import { ActionCard } from "@/components/CommandBar";
 import { CommandHelpButton } from "@/components/CommandHelp";
 import { VoiceSheet } from "@/components/VoiceStage";
 import { useRecorder } from "@/components/useRecorder";
-import { addFact, deleteChat, listChats, loadChat, runCommand, saveAnswer, saveChat, transcribeAudio } from "@/lib/actions";
+import { addFact, deleteChat, listChats, loadChat, runCommand, saveAnswer, saveChat, setVoiceReplies, transcribeAudio } from "@/lib/actions";
+import { speak, speechSupported, stopSpeaking, useSpeaking } from "@/lib/speech";
 import { shortDate } from "@/lib/format";
 import type { ChatTurn } from "@/lib/ai";
 import { answerText, type AskEvent, type Card, type ChatAnswer, type ChatMsg, type ChatSummary, type FactCard, type LegacyAnswer, type Reply } from "@/lib/chat";
@@ -45,8 +46,10 @@ const relTime = (ms: number) => {
   return shortDate(new Date(ms));
 };
 
-export function AssistantView({ scopes, initialScope, initialQuestion, initialChat, enabled, name, focus }: {
+export function AssistantView({ scopes, initialScope, initialQuestion, initialChat, enabled, name, focus, voiceReplies }: {
   scopes: Scopes; initialScope: string; initialQuestion: string; initialChat: string | null; enabled: boolean; name: string;
+  /** Risposte lette ad alta voce: l'ultima scelta dell'utente, salvata sul server. */
+  voiceReplies: boolean;
   /** Pagina da cui arriva la domanda (item:<id>, project:<id>, person:<id>). */
   focus?: string;
 }) {
@@ -69,6 +72,17 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
   const dirty = useRef(false);
+  const [voice, setVoice] = useState(voiceReplies);
+  const voiceRef = useRef(voice);
+  voiceRef.current = voice;
+  const [canSpeak, setCanSpeak] = useState(false);
+  useEffect(() => { setCanSpeak(speechSupported()); return () => stopSpeaking(); }, []);
+  const toggleVoice = () => {
+    const on = !voice;
+    setVoice(on);
+    if (!on) stopSpeaking();
+    setVoiceReplies(on);
+  };
 
   const mic = useRecorder(
     (wav) => {
@@ -92,6 +106,7 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
   };
 
   const open = async (id: string) => {
+    stopSpeaking();
     const c = await loadChat(id);
     if (!c) { remember(null); return; }
     setChatId(c.id);
@@ -149,6 +164,7 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
   async function send(text: string, voice = false, expert = false) {
     const q = text.trim();
     if (!q || thinking) return;
+    stopSpeaking();
     // Il quadro completo ha una pagina sua (sezioni, fonti, prossimi passi).
     const topic = overviewTopic(q);
     if (topic) { setInput(""); router.push(overviewHref(topic)); return; }
@@ -160,6 +176,8 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
     const ctrl = new AbortController();
     abort.current = ctrl;
     let failed = "";
+    /** Il testo della risposta come arriva, per leggerlo alla fine (lo stato di React può non essere ancora aggiornato). */
+    let spoken = "";
     try {
       const res = await fetch("/api/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: q, turns, scope: scopeRef.current, focus, expert }), signal: ctrl.signal });
       if (!res.ok || !res.body) throw new Error(res.status === 401 ? "Sessione scaduta: ricarica la pagina e accedi di nuovo." : `Errore ${res.status}`);
@@ -176,6 +194,9 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
           buf = buf.slice(nl + 1);
           if (!line.trim()) continue;
           const e = JSON.parse(line) as AskEvent;
+          if (e.type === "delta") spoken += e.text;
+          else if (e.type === "answer") spoken = answerText(e.answer);
+          else if (e.type === "reset") spoken = "";
           if (e.type === "step") patchAt(at, (m) => ({ step: e.step, answer: e.read != null ? { text: "", note: "", sources: [], read: e.read } : m.answer }));
           else if (e.type === "scope") patchAt(at, { scope: e.scope });
           else if (e.type === "delta") patchAt(at, (m) => {
@@ -194,6 +215,8 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
       failed = ctrl.signal.aborted ? "Risposta interrotta." : err instanceof Error ? err.message : "Errore di rete.";
     }
     abort.current = null;
+    // Con l'audio attivo la risposta finita si legge da sola.
+    if (voiceRef.current && !ctrl.signal.aborted && spoken.trim()) speak(`msg:${at}`, spoken);
     update((all) => {
       const r = all[at];
       if (r?.role !== "assistant") return all;
@@ -218,7 +241,7 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
   };
   const patchCard = (i: number, k: number, patch: Partial<Card>) => patchAt(i, (m) => ({ cards: m.cards.map((c, h) => (h === k ? { ...c, ...patch } : c)) }));
 
-  const reset = () => { mic.release(); abort.current?.abort(); setMsgs([]); setInput(""); setChatId(null); remember(null); setShowHistory(false); };
+  const reset = () => { stopSpeaking(); mic.release(); abort.current?.abort(); setMsgs([]); setInput(""); setChatId(null); remember(null); setShowHistory(false); };
   const remove = async (id: string) => {
     if (!window.confirm("Eliminare questa conversazione?")) return;
     await deleteChat(id);
@@ -287,6 +310,7 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
                       onFollowUp={busy || !enabled ? undefined : (q) => send(q)}
                       onExpert={busy || !enabled || !m.question || ("expert" in m.answer && m.answer.expert) ? undefined : () => send(m.question!, false, true)}
                       question={m.question}
+                      speakKey={canSpeak ? `msg:${i}` : undefined}
                     />
                   )}
                   {m.facts && m.facts.length > 0 && (
@@ -380,7 +404,15 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
               ) : (
                 <>
                   <CommandHelpButton onPick={setInput} />
-                  <button className="btn btn-secondary btn-icon" onClick={mic.start} disabled={busy || !enabled} title="Detta" aria-label="Detta"><Icon name="mic" /></button>
+                  {canSpeak && (
+                    <button className={`btn btn-icon ${voice ? "btn-secondary" : "btn-ghost"}`} onClick={toggleVoice} aria-pressed={voice}
+                      title={voice ? "Risposte lette ad alta voce: attivo (tocca per spegnere)" : "Risposte lette ad alta voce: spento (tocca per attivare)"}
+                      aria-label={voice ? "Spegni la lettura delle risposte" : "Attiva la lettura delle risposte"}
+                      style={voice ? { color: "var(--accent-text)" } : { color: "var(--muted)" }}>
+                      <Icon name={voice ? "volume" : "volumeOff"} />
+                    </button>
+                  )}
+                  <button className="btn btn-secondary btn-icon" onClick={() => { stopSpeaking(); mic.start(); }} disabled={busy || !enabled} title="Detta" aria-label="Detta"><Icon name="mic" /></button>
                   <button className="btn btn-primary btn-icon" onClick={() => send(input)} disabled={!input.trim() || busy || !enabled} title="Invia" aria-label="Invia"><Icon name="arrowR" /></button>
                 </>
               )}
@@ -504,10 +536,14 @@ function Rich({ text, streaming, cite }: { text: string; streaming: boolean; cit
 
 const shortModel = (m?: string) => (m ? m.split("/").pop()!.replace(/-\d{4}$/, "") : "");
 
-function AnswerBlock({ a, scope, streaming, onFollowUp, onExpert, question }: {
+function AnswerBlock({ a, scope, streaming, onFollowUp, onExpert, question, speakKey }: {
   a: ChatAnswer | LegacyAnswer; scope: string; streaming: boolean;
   onFollowUp?: (q: string) => void; onExpert?: () => void; question?: string;
+  /** Per riascoltare la risposta (assente se il dispositivo non ha la sintesi vocale). */
+  speakKey?: string;
 }) {
+  const playing = useSpeaking();
+  const isPlaying = !!speakKey && playing === speakKey;
   const [saved, setSaved] = useState<"no" | "saving" | "yes">("no");
   const [showSteps, setShowSteps] = useState(false);
   const order = a.sources.map((x) => x.id);
@@ -527,6 +563,13 @@ function AnswerBlock({ a, scope, streaming, onFollowUp, onExpert, question }: {
     <>
       <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--accent-text)" }}>
         <Icon name="ai" size={14} />{rich && a.expert ? "Risposta ragionata" : "Risposta"}
+        {speakKey && !streaming && (
+          <button className="btn btn-ghost" onClick={() => (isPlaying ? stopSpeaking() : speak(speakKey, answerText(a)))}
+            title={isPlaying ? "Ferma la lettura" : "Ascolta la risposta"} aria-label={isPlaying ? "Ferma la lettura" : "Ascolta la risposta"}
+            style={{ marginLeft: "auto", height: 26, gap: 5, fontSize: 12, padding: "0 8px", textTransform: "none", letterSpacing: 0 }}>
+            <Icon name={isPlaying ? "stop" : "volume"} size={13} />{isPlaying ? "Ferma" : "Ascolta"}
+          </button>
+        )}
       </div>
       {rich ? <Rich text={a.text} streaming={streaming} cite={cite} /> : (
         <>

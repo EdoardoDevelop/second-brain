@@ -1211,3 +1211,11 @@ export async function loadDemoData() {
   refreshAll();
 }
 
+
+// ——— Risposte lette ad alta voce ———
+
+/** L'ultima scelta vale per tutte le conversazioni, anche su altri dispositivi (letta da assistente/page.tsx). */
+export async function setVoiceReplies(on: boolean) {
+  await guard();
+  await setSetting("voice_replies", on ? "1" : "0");
+}

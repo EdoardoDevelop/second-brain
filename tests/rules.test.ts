@@ -5,6 +5,7 @@ import { overviewTopic } from "../src/lib/overview-topic";
 import { confirmedAgo, factAge } from "../src/lib/fact-age";
 import { cadenceLabel, cadenceOf, cleanLabel, nextDate, sameSeries } from "../src/lib/habits";
 import { dueLabel, isoDay } from "../src/lib/format";
+import { speechText } from "../src/lib/speech";
 
 const DAY = 86400000;
 
@@ -72,4 +73,8 @@ test("scadenze: l'anno compare solo se non è quello corrente", () => {
   assert.ok(!dueLabel(`${year}-12-31`).includes(String(year)) || isoDay() === `${year}-12-31`);
   assert.ok(dueLabel(`${year + 1}-03-31`).endsWith(String(year + 1)));
   assert.equal(dueLabel(isoDay()), "Oggi");
+});
+
+test("lettura ad alta voce: niente citazioni, grassetti, elenchi e indirizzi", () => {
+  assert.equal(speechText("Il **Poco F6 Pro** ⟦it_123⟧ va bene.\n\n- batteria\n- schermo https://example.com/x [[FINE]]"), "Il Poco F6 Pro va bene. batteria, schermo link");
 });
