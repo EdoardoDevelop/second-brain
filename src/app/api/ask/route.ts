@@ -23,7 +23,8 @@ export async function POST(req: Request) {
   if (!(await isAuthenticated())) return Response.json({ error: "Non autorizzato" }, { status: 401 });
   const body = (await req.json().catch(() => ({}))) as { question?: string; turns?: ChatTurn[]; scope?: string; focus?: string; expert?: boolean };
   const q = String(body.question ?? "").trim();
-  const turns = Array.isArray(body.turns) ? body.turns.slice(-8) : [];
+  const allTurns = Array.isArray(body.turns) ? body.turns : [];
+  const turns = allTurns.slice(-8);
   const scope = String(body.scope ?? "all");
   const expert = body.expert === true;
 
@@ -49,7 +50,8 @@ export async function POST(req: Request) {
             onEvent: (e) => send(e),
           });
           const userTurns = turns.filter((t) => t.role === "user").length + 1;
-          const closing = r.done || userTurns >= 4;
+          // Di solito chiude il modello ([[FINE]]); il tetto evita chiacchierate infinite senza troncare chi sta ancora raccontando.
+          const closing = r.done || userTurns >= 6;
           send({ type: "answer", answer: { text: r.text, note: "", sources: [], read: 0, model: r.model, cost: r.cost } });
           if (closing) {
             const conversation = [...turns, { role: "user" as const, text: q }, { role: "assistant" as const, text: r.text }];
@@ -67,7 +69,8 @@ export async function POST(req: Request) {
         if (!expert) {
           const t0 = Date.now();
           const ctx = await commandContext();
-          const quick = await quickCommand(q, ctx, turns).catch(() => null);
+          // Dopo la chiusura del diario si continua a raccontare: serve tutta la conversazione (es. «il titolare» = di Easytech, detto all'inizio).
+          const quick = await quickCommand(q, ctx, checkin ? allTurns.slice(-16) : turns, checkin ? 16 : 4).catch(() => null);
           if (quick && !quick.question && (quick.actions.length || quick.facts.length)) {
             if (quick.actions.length) send({ type: "command", actions: quick.actions, names: contextNames(ctx) });
             if (quick.facts.length) send({ type: "facts", facts: quick.facts });

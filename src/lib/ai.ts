@@ -249,8 +249,8 @@ const QuickSchema = z.object({
  * Smistamento veloce (modello "fast", una sola chiamata, contesto già incluso): i comandi diventano subito azioni
  * da confermare; se è una domanda, `question` è true e la risposta la dà l'Assistente a passi.
  */
-export async function quickCommand(text: string, ctx: CommandContext, turns: ChatTurn[] = []): Promise<{ question: boolean; actions: CommandAction[]; facts: ProposedFact[] }> {
-  const prev = turns.slice(-4).map((t) => `${t.role === "user" ? "Utente" : "Assistente"}: ${t.text.slice(0, 600)}`).join("\n");
+export async function quickCommand(text: string, ctx: CommandContext, turns: ChatTurn[] = [], history = 4): Promise<{ question: boolean; actions: CommandAction[]; facts: ProposedFact[] }> {
+  const prev = turns.slice(-history).map((t) => `${t.role === "user" ? "Utente" : "Assistente"}: ${t.text.slice(0, 600)}`).join("\n");
   const known = await db.select({ id: facts.id, text: facts.text }).from(facts).where(eq(facts.status, "confirmed")).limit(80);
   const out = await callJSON<z.infer<typeof QuickSchema>>({
     tier: "fast", task: "comando", name: "comando", maxTokens: 2000, temperature: 0, persona: false, timeoutMs: 30_000,
