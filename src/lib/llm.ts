@@ -91,6 +91,9 @@ export async function userContext(): Promise<string> {
 
 /** Errori che indicano un modello non utilizzabile con queste impostazioni (e non un problema passeggero). */
 const UNAVAILABLE = /no endpoints|no allowed providers|data policy|zdr|not a valid model|model .*not (found|exist)|does not exist|no provider|guardrail|not available/i;
+/** Intoppi passeggeri del fornitore: vale la pena riprovare una volta. */
+const TRANSIENT = /provider returned error|overloaded|rate.?limit|timeout|timed out|temporarily|upstream|fetch failed/i;
+const isTransient = (e: LlmError) => e.status === 429 || e.status >= 500 || e.name === "TimeoutError" || TRANSIENT.test(e.message);
 
 export class LlmError extends Error {
   constructor(message: string, public status = 0) { super(message); }
@@ -218,6 +221,11 @@ export async function callLLM(req: LlmRequest): Promise<LlmResult> {
       unavailable.set(model + "|" + cfg.privacy, Date.now() + UNAVAILABLE_TTL);
       await setSetting("ai_warning", JSON.stringify({ at: Date.now(), model, tier, message: err.message })).catch(() => {});
       return send(req, cfg, fallback, "fast");
+    }
+    // Errore passeggero (es. «Provider returned error»): un secondo tentativo, sul modello veloce se c'è. Non con lo streaming, già mostrato a metà.
+    if (!req.onDelta && !req.signal?.aborted && err instanceof Error && isTransient(err as LlmError)) {
+      await new Promise((r) => setTimeout(r, 1500));
+      return fallback && fallback !== model ? send(req, cfg, fallback, "fast") : send(req, cfg, model, tier);
     }
     throw err;
   }

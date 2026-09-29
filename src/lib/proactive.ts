@@ -204,7 +204,7 @@ export async function morningBrief(): Promise<DailyBrief> {
   const out = await callJSON<z.infer<typeof BriefSchema>>({
     tier: "smart", task: "riepilogo_mattino", name: "riepilogo_mattino", maxTokens: 1200,
     messages: [
-      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights. Le abitudini in arrivo (cose che l'utente fa di solito oggi o domani) vanno ricordate in highlights. Se c'è il racconto di ieri sera, puoi riprenderlo con naturalezza (es. «ieri mi hai detto che…») quando è utile per oggi." },
+      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights. Le abitudini in arrivo (cose che l'utente fa di solito oggi o domani) vanno ricordate in highlights. Guarda il giorno della settimana: se i fatti confermati dicono che certe cose l'utente le fa in un altro giorno (es. i lavori di casa il sabato), non metterle tra le cose di oggi. Se c'è il racconto di ieri sera, puoi riprenderlo con naturalezza (es. «ieri mi hai detto che…») quando è utile per oggi." },
       { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>${habitsSoon.length ? `\n<abitudini_in_arrivo>\n${JSON.stringify(habitsSoon)}\n</abitudini_in_arrivo>` : ""}${diary ? `\n<ieri_sera_mi_ha_raccontato>\n${diary}\n</ieri_sera_mi_ha_raccontato>` : ""}\n<cambiato>\n${empty ? "Nulla di nuovo." : JSON.stringify(delta)}\n</cambiato>` },
     ],
     jsonSchema: z.toJSONSchema(BriefSchema),
@@ -300,7 +300,8 @@ async function signals() {
     .filter((d) => !seen.has(`d:${d.key}:${d.until}`))
     .map((d) => ({ ...d, seenKey: `d:${d.key}:${d.until}` }));
 
-  return { today, clusters, quiet, stale, overdue, conflicts, week, personalGoals, unlinked, habits, deadlines, projects: ps.filter((p) => p.status !== "Chiuso").map((p) => ({ id: p.id, name: p.name })) };
+  const weekdayName = new Intl.DateTimeFormat("it-IT", { timeZone: "Europe/Rome", weekday: "long" }).format(new Date());
+  return { today, weekday: weekdayName, clusters, quiet, stale, overdue, conflicts, week, personalGoals, unlinked, habits, deadlines, projects: ps.filter((p) => p.status !== "Chiuso").map((p) => ({ id: p.id, name: p.name })) };
 }
 
 const InsightSchema = z.object({
@@ -402,8 +403,8 @@ export async function generateInsights(): Promise<number> {
   const goalSignals = s.personalGoals.some((g) => g.dueSoon || g.idle || g.noNextStep) || s.unlinked.length > 0;
   const empty = !s.clusters.length && !s.quiet.length && !s.stale.length && !s.overdue.length && !s.conflicts.length && !s.week && !goalSignals && !s.habits.length && !s.deadlines.length;
   // Le proposte della cura notturna della memoria («cleanup») restano finché non si decidono.
-  await db.update(insights).set({ status: "dismissed" }).where(and(eq(insights.status, "new"), ne(insights.kind, "cleanup")));
-  if (empty) { await log("Suggerimenti", null, "Nessun segnale"); return 0; }
+  const dismissOld = () => db.update(insights).set({ status: "dismissed" }).where(and(eq(insights.status, "new"), ne(insights.kind, "cleanup")));
+  if (empty) { await dismissOld(); await log("Suggerimenti", null, "Nessun segnale"); return 0; }
 
   const out = await callJSON<z.infer<typeof InsightLoose>>({
     tier: "smart", task: "suggerimenti", name: "suggerimenti", maxTokens: 3000,
@@ -413,6 +414,7 @@ export async function generateInsights(): Promise<number> {
         content: `Sei il Second Brain dell'utente e oggi proponi al massimo 4 suggerimenti utili, in italiano, a partire dai segnali calcolati sui suoi dati.
 Tipi: project (note senza progetto con un tema comune: proponi create_project, poi update_item per assegnarle), follow_up (persona non sentita da tempo con cose in sospeso: proponi add_task "Sentire …"), stale (progetto fermo: proponi il prossimo passo come add_task), overdue (attività scadute da giorni: proponi set_task_due o complete_task), conflict (informazioni in conflitto da chiarire), weekly (il lunedì, bilancio della settimana in 2-3 frasi, senza azioni), goal (obiettivo personale in scadenza, fermo o senza un prossimo passo: proponi add_task con goalId; oppure elementi di unlinked che servono a un obiettivo: proponi update_item con goalId).
 habit (una cosa che l'utente fa con regolarità e che arriva oggi, domani o dopodomani, vedi habits: proponi add_task per prepararla con due il giorno prima o il giorno stesso, e nel body di' cosa preparare o ritrovare partendo dalle ultime volte in lastTimes, citandole in refs), plan (più attività in scadenza ravvicinata nello stesso progetto o obiettivo, vedi deadlines: proponi set_task_due per dare una data alle attività senza data prima della scadenza, distribuendole nei giorni e mettendo prima le più importanti, ed eventualmente add_task per un passo che manca; nel body il piano giorno per giorno in 2-4 righe).
+Oggi è ${s.weekday} ${s.today}. Rispetta ciò che i fatti confermati dicono su quando l'utente fa le cose (giorni, orari, abitudini: es. «i lavori di casa li faccio il sabato»): non proporre per oggi cose che fa in un altro giorno; se serve, proponi set_task_due per il prossimo giorno giusto, altrimenti lasciale stare.
 Gli obiettivi personali (personalGoals) sono ciò che conta di più per l'utente: se un suggerimento di qualsiasi tipo è rilevante per uno di essi, dillo nel body («Rilevante per il tuo obiettivo …») e metti il suo id in refs.
 Scegli solo ciò che è davvero utile; meglio pochi suggerimenti buoni. Usa solo gli id presenti nei segnali. Le azioni verranno confermate dall'utente: compila solo i campi che servono, gli altri null.`,
       },
@@ -431,6 +433,8 @@ Scegli solo ciò che è davvero utile; meglio pochi suggerimenti buoni. Usa solo
     ...ctx.people.map((p): [string, [string, string]] => [p.id, [p.name, `/persone/${p.id}`]]),
     ...ctx.aims.map((a): [string, [string, string]] => [a.id, [a.title, `/obiettivi/${a.id}`]]),
   ]);
+  // Solo ora che l'IA ha risposto: se fallisce, restano i suggerimenti di prima.
+  await dismissOld();
   const day = isoDay();
   let n = 0;
   for (const ins of out.insights.slice(0, 4)) {
