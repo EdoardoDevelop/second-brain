@@ -544,3 +544,7 @@ a.cite:hover { background: var(--color-accent); color: var(--color-bg); }
 .ov-sources { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
 .ov-sources a { color: var(--color-text); text-decoration: none; }
 .ov-sources a:hover { color: var(--accent-text); }
+
+/* ——— Domanda del giorno sui fatti ——— */
+.fact-q { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; padding: 12px 14px; border: 1px dashed var(--color-divider); border-radius: var(--radius, 0); animation: sbIn .3s var(--ease-decel, ease) both; }
+.fact-q-icon { display: flex; color: var(--accent-text); flex: none; }

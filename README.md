@@ -11,14 +11,15 @@ Web app per un solo utente, usata da computer e telefono (installabile come app)
 | **Home** | Riepilogo del mattino scritto dall'IA, suggerimenti dell'IA con azioni da confermare, meteo, notizie per te, catture, attività, agenda, progetti, obiettivi, persone, preferiti, conversazioni. Riquadri riordinabili e ridimensionabili |
 | **Inbox** | Cattura di testo, link, file (foto, PDF, audio) e registrazioni; condivisione dal telefono (Android); proposta dell'IA modificabile (tipo, titolo, sintesi, persone, progetto, tag, collegamenti e conflitti, attività) da confermare |
 | **Conoscenza** | Ricerca, viste, filtri, preferiti; dettaglio con contenuto modificabile, allegati (popup immagini, lettore PDF integrato), azioni IA, collegamenti, esporta in Markdown, «Chiedi all'IA su questo» |
-| **Assistente** | Domande e comandi, scritti o a voce. L'IA lavora a passi (cerca, apre, confronta), risponde con citazioni cliccabili, suggerisce domande successive, propone azioni e fatti da ricordare che confermi tu. «Pensa meglio» usa un modello più potente; «Salva in memoria» manda la risposta in Inbox |
+| **Assistente** | Domande e comandi, scritti o a voce. L'IA lavora a passi (cerca, apre, confronta), risponde con citazioni cliccabili, suggerisce domande successive, propone azioni e fatti da ricordare che confermi tu. Per le domande sul perché («perché X è fermo?») segue in un passo solo i collegamenti tra progetto, attività, persone, riunioni e documenti. «Pensa meglio» usa un modello più potente; «Salva in memoria» manda la risposta in Inbox |
 | **Barra comandi** | ⌘J (o il pulsante IA/microfono): comandi e domande rapide con lo stesso motore dell'Assistente |
 | **Attività** | Gruppi per scadenza, orari e promemoria con notifica («Fatto», «+1 ora»), modifica ed eliminazione |
 | **Progetti e Persone** | Obiettivi, attività, documenti, persone coinvolte, «Cosa dovresti sapere» e «Relazione in breve» generate dall'IA |
 | **Quadro completo** | «Fammi il quadro completo di X» (Assistente, ⌘J o pulsanti su progetto, persona, obiettivo): stato, decisioni, problemi aperti, persone, contraddizioni e prossimi passi con le fonti; vista derivata, non salvata in memoria |
 | **Obiettivi** | Obiettivi personali (anche fuori dai progetti) con stato e scadenza; attività ed elementi collegati; l'IA li tiene presenti in risposte e suggerimenti e segnala quelli fermi o in scadenza |
 | **Timeline e Connessioni** | Cronologia per giorno; grafo 2D/3D di elementi, progetti, persone e concetti |
-| **Impostazioni** | Profilo e fatti che l'IA sa di te, aspetto (temi, colori, carattere, sfondi), notifiche push, IA (modelli per compito, privacy, spesa del mese con tetto, confronto modelli), integrazioni, registro IA, backup |
+| **Cosa so di te** | I fatti che l'IA sa di te, con provenienza, gruppi ed età (fresco, vecchio, forse superato); una domanda al giorno «È ancora vero che…?» anche nella Home; la cura notturna propone doppioni, contraddizioni e riconferme |
+| **Impostazioni** | Profilo, aspetto (temi, colori, carattere, sfondi), notifiche push, IA (modelli per compito, privacy, spesa del mese con tetto, confronto modelli), integrazioni, registro IA, backup |
 | **Integrazioni** | Server MCP e skill per Claude, API REST con chiavi, webhook firmati |
 
 ## Come funziona l'IA

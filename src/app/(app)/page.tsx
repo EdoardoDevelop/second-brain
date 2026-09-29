@@ -17,6 +17,8 @@ import { WeatherWidget } from "@/components/weather/WeatherWidget";
 import { NewsWidget } from "@/components/news/NewsWidget";
 import { InsightsWidget } from "@/components/InsightsWidget";
 import { getDailyBrief, listInsights } from "@/lib/proactive";
+import { todayFactQuestion } from "@/lib/fact-question";
+import { FactQuestion } from "@/components/FactQuestion";
 import { parseNewsConfig } from "@/lib/news";
 import { getNewsFeed } from "@/lib/news-api";
 import { aiEnabled } from "@/lib/ai";
@@ -219,7 +221,7 @@ export default async function Home() {
       <h1 className="page-title" style={{ margin: 0, fontSize: 48, letterSpacing: "-.02em" }}>{greeting() + (profile.name ? `, ${profile.name}` : "")}</h1>
     </>
   );
-  const brief = await getDailyBrief();
+  const [brief, factQ] = await Promise.all([getDailyBrief(), todayFactQuestion().catch(() => null)]);
   const summary = (
     <>
       {brief ? (
@@ -242,6 +244,7 @@ export default async function Home() {
       ) : (
       <p style={{ margin: 0, fontSize: 17, lineHeight: 1.6, textWrap: "pretty" }}>{sentence}</p>
       )}
+      {factQ && <FactQuestion q={factQ} />}
       {conflicts.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
           <span className="muted" style={{ fontSize: 12 }}>Fonti</span>

@@ -20,6 +20,7 @@ const ROUTES: Route[] = [
   { method: "GET", path: /^projects\/(?<id>[\w-]+)$/, tool: "get_project", doc: "GET /projects/{id} — obiettivi, attività, documenti, sintesi" },
   { method: "GET", path: /^people$/, tool: "list_people", doc: "GET /people?query=… — persone" },
   { method: "GET", path: /^people\/(?<id>[\w-]+)$/, tool: "get_person", doc: "GET /people/{id} — dettaglio persona" },
+  { method: "GET", path: /^relations$/, tool: "trace_relations", doc: "GET /relations?id=…|name=… — percorso delle relazioni di un progetto, una persona o un obiettivo" },
   { method: "POST", path: /^command$/, tool: "run_command", doc: "POST /command {text, execute?} — comando in linguaggio naturale" },
 ];
 

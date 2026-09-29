@@ -6,6 +6,7 @@ import { facts, insights, items, links, type Why } from "./db/schema";
 import { createHash } from "node:crypto";
 import type { CommandAction } from "./ai";
 import { isoDay, shortDate } from "./format";
+import { STALE_DAYS } from "./fact-age";
 import { budgetState, callJSON } from "./llm";
 import { log } from "./pipeline";
 import { similarPairs, syncEmbeddings } from "./semantic";
@@ -58,8 +59,8 @@ const FactSchema = z.object({
 });
 
 const SEEN_MAX = 3000;
-/** Oltre questo tempo senza conferme un fatto va ricontrollato (come nel Memory Inspector). */
-const STALE_MS = 180 * 86400000;
+/** Oltre questo tempo senza conferme un fatto è «forse superato» (fact-age.ts, come in Cosa so di te). */
+const STALE_MS = STALE_DAYS * 86400000;
 const MAX_FACT_CARDS = 3;
 
 export async function gardenMemory(): Promise<GardenStatus> {

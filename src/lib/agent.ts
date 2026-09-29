@@ -9,6 +9,7 @@ import { isoDay } from "./format";
 import { callLLM, type LlmMessage, type LlmTool } from "./llm";
 import { commandContext } from "./queries";
 import { hybridSearch } from "./semantic";
+import { traceRelations } from "./relations";
 import type { AiTier } from "./settings";
 
 /**
@@ -60,6 +61,14 @@ function toolDefs(): LlmTool[] {
   defs.push({
     type: "function",
     function: {
+      name: "trace_relations",
+      description: "Segue in una sola chiamata i collegamenti attorno a un progetto, una persona o un obiettivo personale: attività aperte (scadute, ferme, da chi dipendono), persone coinvolte e da quanto non se ne sa nulla, ultime riunioni e note, documenti, decisioni, conflitti, più le prove già misurate. Usalo per domande sul perché e sul come («perché X è fermo?», «cosa blocca…?», «chi sto aspettando per…?», «com'è messo…?»).",
+      parameters: { type: "object", properties: { id: { type: "string", description: "id del progetto, della persona o dell'obiettivo, se lo conosci" }, name: { type: "string", description: "Altrimenti il nome" } } },
+    },
+  });
+  defs.push({
+    type: "function",
+    function: {
       name: "propose_actions",
       description: "Propone modifiche alla memoria (catture, attività, progetti, obiettivi, persone, modifiche e collegamenti tra elementi). NON le esegue: l'utente le vede come schede e le conferma. Usa solo id ottenuti dagli strumenti. Per informazioni nuove da archiviare usa kind capture.",
       parameters: commandActionJsonSchema(),
@@ -97,6 +106,7 @@ function stepLabel(name: string, args: Record<string, unknown>, titles: Map<stri
     case "get_project": return `Apro il progetto «${titles.get(String(args.id)) ?? ""}»`;
     case "list_people": return "Guardo le persone";
     case "get_person": return `Apro la scheda di ${titles.get(String(args.id)) ?? "una persona"}`;
+    case "trace_relations": return `Seguo i collegamenti di «${titles.get(String(args.id)) ?? (q("name") || "…")}»`;
     case "propose_actions": return "Preparo le azioni da confermare";
     case "remember_fact": return "Propongo qualcosa da ricordare";
     default: return name;
@@ -161,6 +171,7 @@ Oggi è ${o.weekday} ${o.today}. Ambito delle ricerche: ${o.scope}.${o.focus ? "
 
 Come lavori:
 - Sotto trovi già progetti, persone, attività aperte ed elementi recenti con la sintesi: se bastano, rispondi subito, senza strumenti.
+- Per domande sul perché o sul come di un progetto, una persona o un obiettivo («perché X è fermo?», «cosa blocca…?», «chi sto aspettando?») usa per prima cosa trace_relations: in una chiamata ti dà il percorso attività → persone → conversazioni → documenti con le prove. Rispondi seguendo quel percorso, con le prove concrete (giorni, attività, persone) e le citazioni.
 - Altrimenti cerca con search_memory e apri con get_item solo gli elementi di cui ti serve il testo completo. Sii rapido: chiama più strumenti nello stesso passo (più ricerche o più get_item insieme) invece che uno alla volta. Per la giornata usa today.
 - Non inventare: usa solo ciò che trovi. Se le informazioni mancano o si contraddicono, dillo (indica la più recente).
 - Non scrivere nulla prima di aver usato gli strumenti necessari: niente "Ora cerco…".
@@ -315,6 +326,17 @@ async function runTool(name: string, args: Record<string, unknown>, st: ToolStat
     const res = await summarizeItems(rows.sort((a, b) => order.get(a.id)! - order.get(b.id)!));
     for (const r of res) st.titles.set(r.id, r.title);
     return { results: res };
+  }
+  if (name === "trace_relations") {
+    const out = await traceRelations({ id: args.id ? String(args.id) : undefined, name: args.name ? String(args.name) : undefined });
+    // Gli elementi restituiti valgono come letti: si possono citare.
+    if (out.subject) {
+      st.titles.set(out.subject.id, out.subject.name);
+      for (const i of [...(out.conversations ?? []), ...(out.documents ?? []), ...(out.decisions ?? [])]) { st.read.add(i.id); st.titles.set(i.id, i.title); }
+      for (const e of out.evidence ?? []) if (e.id) st.read.add(e.id);
+      for (const t of out.openTasks ?? []) if (t.fromItem) { st.read.add(t.fromItem.id); st.titles.set(t.fromItem.id, t.fromItem.title); }
+    }
+    return out;
   }
   if (name === "propose_actions") {
     const list = Array.isArray(args.actions) ? args.actions : [];

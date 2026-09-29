@@ -25,6 +25,7 @@ import { FILE_ERROR, log, processAttachment, propose, reindexSoon } from "./pipe
 import { removeFiles } from "./files";
 import { deleteAimRows, executeActions } from "./commands";
 import { buildOverview, forgetOverview, type Overview } from "./overview";
+import { closeFactQuestion, todayFactQuestion } from "./fact-question";
 import { deliver, emit, WEBHOOK_EVENTS } from "./webhooks";
 import { createApiKey } from "./api-keys";
 import { randomBytes } from "node:crypto";
@@ -686,11 +687,21 @@ export async function inspectorData() {
       for (const c of await categorizeFacts(pending)) await db.update(facts).set({ category: c.category }).where(eq(facts.id, c.id));
     } catch { /* restano «da classificare» */ }
   }
-  const [list, pp] = await Promise.all([
+  const [list, pp, question] = await Promise.all([
     listFacts(),
     db.select({ id: people.id, name: people.name, role: people.role, org: people.org, note: people.note }).from(people).orderBy(people.name),
+    todayFactQuestion(),
   ]);
-  return { facts: list, people: pp };
+  return { facts: list, people: pp, question };
+}
+
+/** Risposta alla domanda del giorno «È ancora vero che…?»: sì = riconferma, no = non più vero, later = niente. */
+export async function answerFactQuestion(id: string, answer: "yes" | "no" | "later") {
+  await guard();
+  if (answer === "yes") await confirmFact(id);
+  else if (answer === "no") await endFact(id);
+  await closeFactQuestion();
+  refreshAll();
 }
 
 /** Riporta un fatto superato tra quelli validi (es. chiuso per errore). */

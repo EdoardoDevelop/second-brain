@@ -338,6 +338,19 @@ export const TOOLS: Tool[] = [
     },
   },
   {
+    name: "trace_relations",
+    title: "Percorso delle relazioni",
+    description: "Attorno a un progetto, una persona o un obiettivo personale (per id o per nome): attività aperte, scadute e ferme e da chi dipendono, persone coinvolte e da quanto non se ne sa nulla, ultime riunioni e note, documenti, decisioni, conflitti e le prove già misurate. Per domande come «perché X è fermo?» o «cosa sto aspettando da…?».",
+    scope: "read",
+    inputSchema: { type: "object", properties: { id: { type: "string", description: "id del progetto, della persona o dell'obiettivo" }, name: { type: "string", description: "In alternativa, il nome" } } },
+    run: async (a) => {
+      const { traceRelations } = await import("./relations");
+      const out = await traceRelations({ id: str(a, "id"), name: str(a, "name") });
+      if (out.error) throw new ApiError(out.error, 404);
+      return out;
+    },
+  },
+  {
     name: "run_command",
     title: "Comando in linguaggio naturale",
     description: "Interpreta una richiesta in italiano come fa la barra comandi dell'app (catture, attività con orari e promemoria, progetti, obiettivi, persone, modifiche e collegamenti tra elementi). Con execute=false (predefinito) restituisce solo le azioni proposte: mostrale all'utente e, dopo la sua conferma, ripeti la chiamata con execute=true.",

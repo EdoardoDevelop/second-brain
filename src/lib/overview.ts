@@ -45,6 +45,22 @@ type Material = { scope: OverviewScope; itemIds: string[]; taskRows: (typeof tas
 
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/^#/, "").replace(/\s+/g, " ").trim();
 
+/** Trova un progetto, una persona o un obiettivo personale dal nome (senza accenti né maiuscole; esatto o contenuto). */
+export async function resolveSubject(name: string): Promise<{ kind: "project" | "person" | "aim"; id: string; name: string } | null> {
+  const t = norm(name);
+  if (!t) return null;
+  const [ps, pp, as] = await Promise.all([
+    db.select({ id: projects.id, name: projects.name }).from(projects),
+    db.select({ id: people.id, name: people.name }).from(people),
+    db.select({ id: aims.id, name: aims.title }).from(aims),
+  ]);
+  for (const [kind, list] of [["project", ps], ["person", pp], ["aim", as]] as const) {
+    const hit = list.find((x) => norm(x.name) === t) ?? (t.length >= 4 ? list.find((x) => norm(x.name).includes(t) || (norm(x.name).length >= 4 && t.includes(norm(x.name)))) : undefined);
+    if (hit) return { kind, id: hit.id, name: hit.name };
+  }
+  return null;
+}
+
 /** Riconosce l'argomento (progetto, persona, obiettivo personale, tag) e raccoglie gli id collegati. */
 async function gather(topic: string): Promise<Material> {
   const t = norm(topic);

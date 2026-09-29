@@ -5,6 +5,8 @@ import { useState, useTransition, type ReactNode } from "react";
 import { Icon } from "@/components/ui";
 import { addFact, confirmFact, deleteFact, endFact, inspectorData, restoreFact, setFactCategory, updateFact, type Fact } from "@/lib/actions";
 import type { FactCategory } from "@/lib/db/schema";
+import { confirmedAgo, factAge } from "@/lib/fact-age";
+import { FactQuestion } from "@/components/FactQuestion";
 
 type Data = Awaited<ReturnType<typeof inspectorData>>;
 
@@ -18,20 +20,21 @@ const GROUPS: [FactCategory | null, string, string][] = [
 const CATEGORY_LABEL: Record<string, string> = { personale: "Personale", lavoro: "Lavoro", persone: "Persone", preferenze: "Preferenze" };
 const SOURCE: Record<string, string> = { chat: "dall'Assistente", comando: "da un comando", manuale: "scritto da te", suggerimento: "da un suggerimento" };
 const ORIGIN: Record<string, string> = { declared: "detto da te", inferred: "dedotto dall'IA", observed: "letto in un elemento" };
-/** Oltre questo tempo senza conferme un fatto va ricontrollato. */
-const STALE_MS = 180 * 86400000;
 
 const dayLabel = (d: string | number) =>
   new Date(typeof d === "string" ? d + "T12:00:00" : d).toLocaleDateString("it-IT", { day: "numeric", month: "short", year: "numeric" });
-const isStale = (f: Fact) => f.status === "confirmed" && !!f.lastConfirmedAt && Date.now() - f.lastConfirmedAt > STALE_MS;
+const age = (f: Fact) => factAge(f.lastConfirmedAt, f.createdAt);
+/** Forse superato: confermato da oltre sei mesi. */
+const isStale = (f: Fact) => f.status === "confirmed" && age(f).age === "stale";
 
 /** Stato del fatto: icona, colore e parola. */
 function status(f: Fact): [string, string, "check" | "alert" | "archive"] {
   if (f.status === "obsolete") return ["Non più vero", "var(--muted)", "archive"];
   if (f.status === "conflict") return ["In conflitto", "var(--danger)", "alert"];
   if (f.status === "pending") return [f.origin === "inferred" ? "Dedotto, da confermare" : "Da confermare", "#d98a1c", "alert"];
-  if (isStale(f)) return ["Da riconfermare", "#d98a1c", "alert"];
-  return ["Confermato", "var(--accent-text)", "check"];
+  if (isStale(f)) return ["Forse superato", "#d98a1c", "alert"];
+  if (age(f).age === "old") return ["Vecchio", "#b39150", "check"];
+  return ["Fresco", "var(--accent-text)", "check"];
 }
 
 export function MemoryInspector({ initial }: { initial: Data }) {
@@ -63,8 +66,11 @@ export function MemoryInspector({ initial }: { initial: Data }) {
           {valid.length} {valid.length === 1 ? "fatto confermato" : "fatti confermati"}
           {review.length ? ` · ${review.length} da verificare` : ""}{past.length ? ` · ${past.length} non più ${past.length === 1 ? "vero" : "veri"}` : ""}.
           {" "}L&apos;IA usa in ogni conversazione solo i fatti confermati; quelli non più veri restano come storia. Nulla entra qui senza la tua conferma.
+          {" "}Fresco: confermato negli ultimi 3 mesi · Vecchio: da 3 a 6 mesi · Forse superato: oltre 6 mesi.
         </div>
       </div>
+
+      {data.question && <FactQuestion key={data.question.id} q={data.question} />}
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <input className="input" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="Aggiungi qualcosa su di te, es. «Lavoro con Rossi sul cantiere di via Roma»" style={{ flex: "1 1 280px" }} />
@@ -165,7 +171,7 @@ function FactRow({ f, act }: { f: Fact; act: (fn: () => Promise<unknown>) => voi
   if (f.sourceLink) meta.push(<Link key="l" href={f.sourceLink.href} style={{ color: "inherit" }}>{f.sourceLink.label}</Link>);
   if (obsolete) meta.push(f.validUntil ? `valido fino al ${dayLabel(f.validUntil)}` : "non più vero");
   else meta.push(`dal ${dayLabel(f.validFrom ?? f.createdAt)}`);
-  if (!obsolete && f.lastConfirmedAt) meta.push(`confermato il ${dayLabel(f.lastConfirmedAt)}`);
+  if (!obsolete && f.lastConfirmedAt) meta.push(<span key="c" title={`il ${dayLabel(f.lastConfirmedAt)}`}>{confirmedAgo(age(f).days)}</span>);
   if (f.supersededBy) meta.push(`sostituito da «${f.supersededBy.text}»`);
 
   return (
