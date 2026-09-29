@@ -28,8 +28,11 @@ const age = (f: Fact) => factAge(f.lastConfirmedAt, f.createdAt);
 const isStale = (f: Fact) => f.status === "confirmed" && age(f).age === "stale";
 
 /** Stato del fatto: icona, colore e parola. */
-function status(f: Fact): [string, string, "check" | "alert" | "archive"] {
+const todayIso = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome" }).format(new Date());
+
+function status(f: Fact): [string, string, "check" | "alert" | "archive" | "calendar"] {
   if (f.status === "obsolete") return ["Non più vero", "var(--muted)", "archive"];
+  if (f.status === "confirmed" && f.validFrom && f.validFrom > todayIso()) return [`In arrivo, dal ${dayLabel(f.validFrom)}`, "var(--accent-text)", "calendar"];
   if (f.status === "conflict") return ["In conflitto", "var(--danger)", "alert"];
   if (f.status === "pending") return [f.origin === "inferred" ? "Dedotto, da confermare" : "Da confermare", "#d98a1c", "alert"];
   if (isStale(f)) return ["Forse superato", "#d98a1c", "alert"];
@@ -189,7 +192,8 @@ function FactRow({ f, act }: { f: Fact; act: (fn: () => Promise<unknown>) => voi
   if (f.origin === "inferred" && f.confidence != null) meta.push(`sicuro al ${Math.round(f.confidence * 100)}%`);
   if (f.sourceLink) meta.push(<Link key="l" href={f.sourceLink.href} style={{ color: "inherit" }}>{f.sourceLink.label}</Link>);
   if (obsolete) meta.push(f.validUntil ? `valido fino al ${dayLabel(f.validUntil)}` : "non più vero");
-  else meta.push(`dal ${dayLabel(f.validFrom ?? f.createdAt)}`);
+  // Per i fatti in arrivo la data d'inizio è già nello stato.
+  else if (!(f.validFrom && f.validFrom > todayIso())) meta.push(`dal ${dayLabel(f.validFrom ?? f.createdAt)}${f.validUntil ? ` al ${dayLabel(f.validUntil)}` : ""}`);
   if (!obsolete && f.lastConfirmedAt) meta.push(<span key="c" title={`il ${dayLabel(f.lastConfirmedAt)}`}>{confirmedAgo(age(f).days)}</span>);
   if (f.supersededBy) meta.push(`sostituito da «${f.supersededBy.text}»`);
 

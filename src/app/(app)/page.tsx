@@ -18,6 +18,7 @@ import { NewsWidget } from "@/components/news/NewsWidget";
 import { InsightsWidget } from "@/components/InsightsWidget";
 import { getDailyBrief, listInsights } from "@/lib/proactive";
 import { todayFactQuestion } from "@/lib/fact-question";
+import { todayCheckin } from "@/lib/checkin";
 import { FactQuestion } from "@/components/FactQuestion";
 import { parseNewsConfig } from "@/lib/news";
 import { getNewsFeed } from "@/lib/news-api";
@@ -221,7 +222,7 @@ export default async function Home() {
       <h1 className="page-title" style={{ margin: 0, fontSize: 48, letterSpacing: "-.02em" }}>{greeting() + (profile.name ? `, ${profile.name}` : "")}</h1>
     </>
   );
-  const [brief, factQ] = await Promise.all([getDailyBrief(), todayFactQuestion().catch(() => null)]);
+  const [brief, factQ, checkin] = await Promise.all([getDailyBrief(), todayFactQuestion().catch(() => null), todayCheckin().catch(() => null)]);
   const summary = (
     <>
       {brief ? (
@@ -243,6 +244,16 @@ export default async function Home() {
         </div>
       ) : (
       <p style={{ margin: 0, fontSize: 17, lineHeight: 1.6, textWrap: "pretty" }}>{sentence}</p>
+      )}
+      {checkin && (
+        <Link href={`/assistente?chat=${checkin.chatId}`} className="checkin-card">
+          <span className="checkin-icon"><Icon name="ai" size={15} /></span>
+          <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+            <span className="eyebrow" style={{ color: "var(--accent-text)" }}>Com&apos;è andata oggi?</span>
+            <span style={{ fontSize: 15, lineHeight: 1.45 }}>{checkin.message}</span>
+          </span>
+          <span className="btn btn-secondary" style={{ height: 30, flex: "none" }}>Rispondi</span>
+        </Link>
       )}
       {factQ && <FactQuestion q={factQ} />}
       {conflicts.length > 0 && (

@@ -38,6 +38,7 @@ export const KIND: Record<ActionKind, [string, IconName]> = {
   merge_facts: ["Unisci fatti", "user"],
   end_fact: ["Non più vero", "archive"],
   confirm_fact: ["È ancora vero", "check"],
+  diary_note: ["Nota di diario", "note"],
 };
 
 const PRIO = ["", "Alta", "Media", "Bassa"];
@@ -94,7 +95,7 @@ export function CommandBar({ onClose, startRecording }: { onClose: () => void; s
   const decideFact = (k: number, keep: boolean) => {
     const f = proposal?.facts[k];
     if (!f) return;
-    if (keep) addFact(f.text, "comando", { replaces: f.replaces.map((r) => r.id), category: f.category });
+    if (keep) addFact(f.text, "comando", { replaces: f.replaces.map((r) => r.id), category: f.category, validFrom: f.validFrom });
     setProposal((p) => p && { ...p, facts: p.facts.map((x, h) => (h === k ? { ...x, state: keep ? "saved" : "discarded" } : x)) });
   };
 
@@ -162,7 +163,7 @@ export function CommandBar({ onClose, startRecording }: { onClose: () => void; s
                   {proposal.facts.map((f, k) => (
                     <div key={k} className="fact-card" data-state={f.state}>
                       <Icon name="ai" size={14} />
-                      <span style={{ flex: 1 }}>{f.state === "saved" ? "Ricorderò: " : f.state === "discarded" ? "Non lo ricorderò: " : "Vuoi che ricordi che "}<b style={{ fontWeight: 500 }}>{f.text}</b>{f.state === "review" ? "?" : ""}{f.replaces.length ? <span className="muted" style={{ display: "block", fontSize: 12.5 }}>{f.state === "saved" ? "Non più vero: " : "Al posto di: "}{f.replaces.map((r) => `«${r.text}»`).join(", ")}</span> : null}</span>
+                      <span style={{ flex: 1 }}>{f.state === "saved" ? "Ricorderò: " : f.state === "discarded" ? "Non lo ricorderò: " : "Vuoi che ricordi che "}<b style={{ fontWeight: 500 }}>{f.text}</b>{f.validFrom && f.validFrom > new Date().toISOString().slice(0, 10) ? <span className="muted"> (dal {f.validFrom.split("-").reverse().join("/")})</span> : null}{f.state === "review" ? "?" : ""}{f.replaces.length ? <span className="muted" style={{ display: "block", fontSize: 12.5 }}>{f.state === "saved" ? "Non più vero: " : "Al posto di: "}{f.replaces.map((r) => `«${r.text}»`).join(", ")}</span> : null}</span>
                       {f.state === "review" && (
                         <>
                           <button className="btn btn-ghost" onClick={() => decideFact(k, false)}>No</button>
@@ -214,7 +215,7 @@ export function ActionCard({ a, names, onChange }: { a: CommandAction & { on: bo
   const input = { className: "input", style: { height: 32, fontSize: 14 } };
   const facts: string[] = [];
   if (a.taskId) facts.push(names[a.taskId] ?? a.taskId);
-  const aimLink = a.kind === "add_task" || a.kind === "update_task" || a.kind === "update_item";
+  const aimLink = a.kind === "add_task" || a.kind === "update_task" || a.kind === "update_item" || a.kind === "diary_note";
   if (a.goalId) facts.push((aimLink ? "Per l'obiettivo: " : "") + (names[a.goalId] ?? a.goalId));
   if (a.kind === "add_goal" && !a.projectId) facts.push("Obiettivo personale");
   if ((a.kind === "add_goal" || a.kind === "update_goal") && a.due) facts.push("Entro: " + dueLabel(a.due));
@@ -229,9 +230,10 @@ export function ActionCard({ a, names, onChange }: { a: CommandAction & { on: bo
   if (a.time && a.remind != null) facts.push("Promemoria: " + (a.remind === 0 ? "all'orario" : a.remind >= 60 && a.remind % 60 === 0 ? `${a.remind / 60} ${a.remind === 60 ? "ora" : "ore"} prima` : `${a.remind} minuti prima`));
   if (a.kind === "update_item" && a.title) facts.push("Nuovo titolo: " + a.title);
   if (a.summary) facts.push("Sintesi: " + a.summary);
-  if (a.tags?.length) facts.push("Aggiungi tag: " + a.tags.map((t) => "#" + t).join(" "));
+  if (a.tags?.length) facts.push((a.kind === "diary_note" ? "Tag: " : "Aggiungi tag: ") + a.tags.map((t) => "#" + t).join(" "));
   if (a.removeTags?.length) facts.push("Togli tag: " + a.removeTags.map((t) => "#" + t).join(" "));
   if (a.addPeople?.length) facts.push("Collega: " + a.addPeople.map((id) => names[id] ?? id).join(", "));
+  if (a.peopleNames?.length) facts.push("Persone: " + a.peopleNames.join(", "));
   if (a.projectId && a.kind !== "update_project") facts.push("Progetto: " + (names[a.projectId] ?? a.projectId));
   if (a.status) facts.push("Stato: " + (a.kind === "update_goal" ? ({ Attivo: "attivo", "In pausa": "in pausa", Chiuso: "abbandonato" } as Record<string, string>)[a.status] ?? a.status : a.status));
   if (a.pct != null) facts.push(`Avanzamento: ${a.pct}%`);
@@ -255,7 +257,8 @@ export function ActionCard({ a, names, onChange }: { a: CommandAction & { on: bo
             {a.otherFactId && <span className="muted" style={{ fontSize: 13 }}>Toglie il doppione «{names[a.otherFactId] ?? a.otherFactId}»</span>}
           </>
         )}
-        {(a.kind === "capture" || a.kind === "append_item") && <textarea className="input" value={a.text ?? ""} onChange={(e) => onChange({ text: e.target.value })} rows={3} style={{ fontSize: 14 }} />}
+        {a.kind === "diary_note" && <input {...input} value={a.title ?? ""} onChange={(e) => onChange({ title: e.target.value })} aria-label="Titolo della nota" />}
+        {(a.kind === "capture" || a.kind === "append_item" || a.kind === "diary_note") && <textarea className="input" value={a.text ?? ""} onChange={(e) => onChange({ text: e.target.value })} rows={3} style={{ fontSize: 14 }} />}
         {(a.kind === "add_task" || a.kind === "add_goal" || a.kind === "create_project") && <input {...input} value={a.title ?? ""} onChange={(e) => onChange({ title: e.target.value })} />}
         {a.kind === "upsert_person" && <input {...input} value={a.name ?? (a.personId ? names[a.personId] : "") ?? ""} onChange={(e) => onChange({ name: e.target.value })} placeholder="Nome" />}
         {(a.kind === "add_task" || a.kind === "set_task_due") && (

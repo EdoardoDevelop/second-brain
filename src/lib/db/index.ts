@@ -103,6 +103,12 @@ CREATE TABLE IF NOT EXISTS aims (
   due TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, done_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS aim_items (aim_id TEXT NOT NULL, item_id TEXT NOT NULL, PRIMARY KEY (aim_id, item_id));
+-- «Com'è andata oggi?»: un check-in serale al giorno al massimo.
+CREATE TABLE IF NOT EXISTS checkins (
+  id TEXT PRIMARY KEY, day TEXT NOT NULL, status TEXT NOT NULL, events TEXT NOT NULL DEFAULT '[]', generic INTEGER NOT NULL DEFAULT 0,
+  opening TEXT, goal TEXT, chat_id TEXT, sent_at INTEGER, answered_at INTEGER, closed_at INTEGER, proposals TEXT
+);
+CREATE INDEX IF NOT EXISTS checkins_day ON checkins(day);
 `;
 
 const g = globalThis as unknown as { __sbClient?: Client; __sbReady?: Promise<void> };

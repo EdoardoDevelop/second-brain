@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { pushPublicKey, saveNotifyPrefs, subscribePush, testPush, unsubscribePush } from "@/lib/actions";
+import { pushPublicKey, saveCheckinPrefs, saveNotifyPrefs, subscribePush, testPush, unsubscribePush } from "@/lib/actions";
 import type { NotifyPrefs } from "@/lib/push";
+import type { CheckinPrefs } from "@/lib/checkin";
 
 type State = "loading" | "unsupported" | "denied" | "off" | "on";
 
@@ -117,6 +118,46 @@ export function NotifySettings({ prefs: initial, devices }: { prefs: NotifyPrefs
           </div>
         </SRow>
       )}
+    </div>
+  );
+}
+
+/** «Com'è andata oggi?»: se e quando l'Assistente scrive la sera. */
+export function CheckinSettings({ prefs: initial }: { prefs: CheckinPrefs }) {
+  const [prefs, setPrefs] = useState(initial);
+  const [, start] = useTransition();
+  const update = (p: Partial<CheckinPrefs>) => {
+    const next = { ...prefs, ...p };
+    setPrefs(next);
+    start(async () => { setPrefs(await saveCheckinPrefs(next)); });
+  };
+  return (
+    <div>
+      <SRow title="Scrivimi la sera" desc="Solo nei giorni in cui c'è qualcosa di cui parlare (un primo giorno, un colloquio, una riunione con qualcuno, un obiettivo in scadenza). Dalle risposte ti propongo cosa ricordare.">
+        <Toggle on={prefs.enabled} onChange={(enabled) => update({ enabled })} label="Scrivimi la sera" />
+      </SRow>
+      <SRow title="Fascia oraria" desc="Dentro la fascia scelgo l'ora a cui di solito rispondi.">
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="time" className="input" value={prefs.from} onChange={(e) => e.target.value && update({ from: e.target.value })} disabled={!prefs.enabled} style={{ height: 36, width: 120 }} aria-label="Dalle" />
+          <span className="muted">–</span>
+          <input type="time" className="input" value={prefs.to} onChange={(e) => e.target.value && update({ to: e.target.value })} disabled={!prefs.enabled} style={{ height: 36, width: 120 }} aria-label="Alle" />
+        </div>
+      </SRow>
+      <SRow title="Nel weekend" desc="Sabato e domenica.">
+        <select className="input" value={prefs.weekend} onChange={(e) => update({ weekend: e.target.value as CheckinPrefs["weekend"] })} disabled={!prefs.enabled} style={{ height: 36, width: "auto" }}>
+          <option value="events">Solo se c&apos;è un evento</option>
+          <option value="always">Sì</option>
+          <option value="never">Mai</option>
+        </select>
+      </SRow>
+      <SRow title="Nei giorni senza novità" desc="Una domanda leggera («Giornata tranquilla?»), mai due giorni di fila. Se non rispondi per tre volte smetto di farla.">
+        <select className="input" value={prefs.generic} onChange={(e) => update({ generic: Number(e.target.value) })} disabled={!prefs.enabled} style={{ height: 36, width: "auto" }}>
+          <option value={0}>Mai</option>
+          <option value={1}>1 volta a settimana</option>
+          <option value={2}>2 volte a settimana</option>
+          <option value={3}>3 volte a settimana</option>
+        </select>
+      </SRow>
     </div>
   );
 }

@@ -127,6 +127,28 @@ export const AIM_STATUSES = ["active", "paused", "done", "dropped"] as const;
 export type AimStatus = (typeof AIM_STATUSES)[number];
 export type Aim = typeof aims.$inferSelect;
 
+/**
+ * «Com'è andata oggi?»: un check-in serale al giorno al massimo. `events` sono i motivi calcolati dal codice,
+ * `chatId` la conversazione in modalità diario, `proposals` quanto ricavato alla fine (da confermare).
+ */
+export const checkins = sqliteTable("checkins", {
+  id: text("id").primaryKey(),
+  day: text("day").notNull(),
+  status: text("status").$type<CheckinStatus>().notNull(),
+  events: text("events", { mode: "json" }).$type<CheckinEvent[]>().notNull().default([]),
+  generic: integer("generic", { mode: "boolean" }).notNull().default(false),
+  opening: text("opening"),
+  goal: text("goal"),
+  chatId: text("chat_id"),
+  sentAt: integer("sent_at", { mode: "timestamp_ms" }),
+  answeredAt: integer("answered_at", { mode: "timestamp_ms" }),
+  closedAt: integer("closed_at", { mode: "timestamp_ms" }),
+  proposals: text("proposals", { mode: "json" }).$type<unknown>(),
+});
+/** skipped = oggi non c'era motivo di scrivere · sent = scritto, in attesa · answered = risposto · closed = conversazione chiusa · ignored = nessuna risposta. */
+export type CheckinStatus = "skipped" | "sent" | "answered" | "closed" | "ignored";
+export type CheckinEvent = { kind: string; score: number; text: string };
+
 /** Elementi della memoria collegati a un obiettivo personale. */
 export const aimItems = sqliteTable(
   "aim_items",

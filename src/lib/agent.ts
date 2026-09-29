@@ -38,7 +38,12 @@ export type AgentResult = {
   model: string;
   tier: AiTier;
   cost: number;
+  /** Modalità diario: l'Assistente ha chiuso la conversazione ([[FINE]]). */
+  done: boolean;
 };
+
+/** Modalità diario («Com'è andata oggi?»): perché ha scritto, cosa vuole scoprire, quante domande ha già fatto. */
+export type CheckinContext = { reason: string[]; goal: string; asked: number };
 
 const READ_TOOLS = ["today", "get_item", "recent_items", "list_tasks", "list_projects", "get_project", "list_people", "get_person"] as const;
 // Il contesto di base è già nel prompt: bastano pochi passi (ognuno è una chiamata al modello).
@@ -85,6 +90,7 @@ function toolDefs(): LlmTool[] {
           fact: { type: "string", description: "Il fatto, in terza persona, breve (es. «Lavora come geometra a Milano»)" },
           replaces: { type: "array", items: { type: "string" }, description: "Testo esatto dei fatti già confermati che questo rende non più veri (es. il lavoro precedente); vuoto se nessuno" },
           category: { type: "string", enum: [...FACT_CATEGORIES], description: FACT_CATEGORY_HELP },
+          valid_from: { type: "string", description: "Da quando vale, YYYY-MM-DD, se l'utente lo dice (anche nel futuro: «dal 19 ottobre» → 2026-10-19; «da lunedì»); null se non lo dice" },
         },
         required: ["fact"],
       },
@@ -165,6 +171,24 @@ async function basics(titles: Map<string, string>): Promise<string> {
   });
 }
 
+/** Prompt della conversazione serale: un amico che fa poche domande, non un assistente che risponde. */
+function checkinPrompt(o: { today: string; weekday: string; basics: string; checkin: CheckinContext }) {
+  const left = Math.max(0, 3 - o.checkin.asked);
+  return `Sei il Second Brain dell'utente e stasera state facendo due chiacchiere su com'è andata la giornata, come tra amici. Oggi è ${o.weekday} ${o.today}. Scrivi in italiano, con il tono del suo profilo.
+Perché gli hai scritto: ${o.checkin.reason.join("; ") || "per sapere com'è andata"}.
+Cosa vale la pena scoprire (per la sua memoria): ${o.checkin.goal || "come è andata e le novità importanti"}.
+
+Come parli:
+- Una sola domanda per messaggio, breve (1-2 frasi), calda e naturale, niente elenchi, niente grassetto, niente citazioni né marcatori [[FONTI]], [[NOTA]] o [[DOMANDE]].
+- Reagisci prima a quello che ha detto (una frase), poi fai la domanda. Chiedi ciò che la memoria non sa ancora: nomi e ruoli delle persone nuove, impressioni, cosa succede dopo. Se ti serve sapere se una persona o una cosa è già nota, usa gli strumenti di lettura; non chiedere quello che sai.
+- ${left > 0 ? `Puoi fare ancora al massimo ${left} ${left === 1 ? "domanda" : "domande"}.` : "Hai già fatto abbastanza domande: chiudi adesso."} Chiudi prima se risponde a monosillabi, è stanco o vuole smettere.
+- Per chiudere: una frase di saluto affettuosa (senza domande), poi su una riga a parte [[FINE]]. Non proporre azioni né fatti da ricordare: li ricaverai dopo.
+
+<quadro_di_partenza>
+${o.basics}
+</quadro_di_partenza>`;
+}
+
 function systemPrompt(o: { today: string; weekday: string; scope: string; focus: string; mode: "chat" | "command"; basics: string }) {
   return `Sei l'Assistente del Second Brain personale dell'utente: la sua memoria di note, documenti, decisioni, riunioni, progetti, persone, attività e obiettivi. Rispondi in italiano.
 Oggi è ${o.weekday} ${o.today}. Ambito delle ricerche: ${o.scope}.${o.focus ? "\n" + o.focus : ""}
@@ -201,7 +225,8 @@ export async function runAgent(o: {
   scope?: string;
   focus?: string;
   tier?: AiTier;
-  mode?: "chat" | "command";
+  mode?: "chat" | "command" | "checkin";
+  checkin?: CheckinContext;
   model?: string;
   /** Nome del compito nel registro dei consumi (predefinito "assistente"). */
   task?: string;
@@ -214,15 +239,21 @@ export async function runAgent(o: {
   const weekday = new Intl.DateTimeFormat("it-IT", { timeZone: "Europe/Rome", weekday: "long" }).format(new Date());
   const titles = new Map<string, string>();
   const messages: LlmMessage[] = [
-    { role: "system", content: systemPrompt({ today: isoDay(), weekday, scope: scope.label, focus: await focusInfo(o.focus), mode: o.mode ?? "chat", basics: await basics(titles) }) },
+    {
+      role: "system",
+      content: o.mode === "checkin" && o.checkin
+        ? checkinPrompt({ today: isoDay(), weekday, basics: await basics(titles), checkin: o.checkin })
+        : systemPrompt({ today: isoDay(), weekday, scope: scope.label, focus: await focusInfo(o.focus), mode: o.mode === "command" ? "command" : "chat", basics: await basics(titles) }),
+    },
     ...(o.turns ?? []).slice(-8).map((t): LlmMessage => ({ role: t.role, content: t.text })),
     { role: "user", content: o.question },
   ];
-  const tools = toolDefs();
+  // Nel diario solo lettura: azioni e fatti si ricavano alla fine della conversazione.
+  const tools = o.mode === "checkin" ? toolDefs().filter((t) => t.function.name !== "propose_actions" && t.function.name !== "remember_fact") : toolDefs();
   const read = new Set<string>();
   const steps: string[] = [];
   const proposed: unknown[] = [];
-  const facts: { text: string; replaces: string[]; category: FactCategory | null }[] = [];
+  const facts: { text: string; replaces: string[]; category: FactCategory | null; validFrom: string | null }[] = [];
   let cost = 0;
   let model = "";
   let usedTier: AiTier = tier;
@@ -306,13 +337,14 @@ export async function runAgent(o: {
     const find = (x: string) => known.find((k) => norm(k.text) === norm(x)) ?? known.find((k) => norm(k.text).includes(norm(x)) || norm(x).includes(norm(k.text)));
     const seen = new Set<string>();
     proposedFacts = facts.filter((f) => !seen.has(f.text.toLowerCase()) && seen.add(f.text.toLowerCase()) && !known.some((k) => norm(k.text) === norm(f.text)))
-      .map((f) => ({ text: f.text, category: f.category, replaces: [...new Map(f.replaces.map(find).filter((k): k is { id: string; text: string } => !!k).map((k) => [k.id, k])).values()] }));
+      .map((f) => ({ text: f.text, category: f.category, validFrom: f.validFrom, replaces: [...new Map(f.replaces.map(find).filter((k): k is { id: string; text: string } => !!k).map((k) => [k.id, k])).values()] }));
   }
 
-  return { text, note, sources, read: read.size, followUps, actions, names, facts: proposedFacts, steps, model, tier: usedTier, cost };
+  const done = /\[\[\s*FINE\s*\]\]/i.test(final);
+  return { text, note, sources, read: read.size, followUps, actions, names, facts: proposedFacts, steps, model, tier: usedTier, cost, done };
 }
 
-type ToolState = { scope: { within?: Set<string> }; read: Set<string>; titles: Map<string, string>; proposed: unknown[]; facts: { text: string; replaces: string[]; category: FactCategory | null }[] };
+type ToolState = { scope: { within?: Set<string> }; read: Set<string>; titles: Map<string, string>; proposed: unknown[]; facts: { text: string; replaces: string[]; category: FactCategory | null; validFrom: string | null }[] };
 
 async function runTool(name: string, args: Record<string, unknown>, st: ToolState): Promise<unknown> {
   if (name === "search_memory") {
@@ -347,7 +379,8 @@ async function runTool(name: string, args: Record<string, unknown>, st: ToolStat
     const f = String(args.fact ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
     const replaces = Array.isArray(args.replaces) ? args.replaces.map((x) => String(x).trim()).filter(Boolean).slice(0, 4) : [];
     const category = (FACT_CATEGORIES as readonly string[]).includes(String(args.category)) ? (args.category as FactCategory) : null;
-    if (f) st.facts.push({ text: f, replaces, category });
+    const vf = String(args.valid_from ?? "");
+    if (f) st.facts.push({ text: f, replaces, category, validFrom: /^\d{4}-\d{2}-\d{2}$/.test(vf) ? vf : null });
     return { ok: true, message: "Proposto all'utente, che deciderà se ricordarlo." };
   }
   const tool = TOOL_BY_NAME.get(name);

@@ -8,10 +8,11 @@ import { items } from "@/lib/db/schema";
 import { isoDay } from "@/lib/format";
 import { log } from "@/lib/pipeline";
 import { commandContext } from "@/lib/queries";
+import { extractDiary, getCheckin, markAnswered } from "@/lib/checkin";
 
 export const maxDuration = 300;
 
-const SCOPE_LABEL = (s: string) => (s === "all" ? "tutta la memoria" : s === "recent" ? "ultimi 30 giorni" : s.startsWith("project:") ? "progetto" : s.startsWith("person:") ? "persona" : s);
+const SCOPE_LABEL = (s: string) => (s === "all" ? "tutta la memoria" : s === "recent" ? "ultimi 30 giorni" : s.startsWith("project:") ? "progetto" : s.startsWith("person:") ? "persona" : s.startsWith("diary:") ? "diario" : s);
 
 /**
  * Messaggio all'Assistente, con risposta in streaming (una riga JSON per evento, vedi AskEvent).
@@ -35,6 +36,32 @@ export async function POST(req: Request) {
         if (!q) throw new Error("Scrivi una domanda.");
         send({ type: "step", step: 0 });
         send({ type: "scope", scope: SCOPE_LABEL(scope) });
+
+        // «Com'è andata oggi?»: conversazione da amico, poi una sola scheda con tutto quello che si è capito.
+        const checkin = scope.startsWith("diary:") ? await getCheckin(scope.slice(6)) : null;
+        if (checkin && checkin.status !== "closed") {
+          const t0 = Date.now();
+          await markAnswered(checkin.id);
+          const asked = turns.filter((t) => t.role === "assistant").length; // la prima è l'apertura
+          const r = await runAgent({
+            question: q, turns, scope: "all", mode: "checkin", tier: "smart", signal: req.signal,
+            checkin: { reason: checkin.events.filter((e) => e.score >= 5).map((e) => e.text), goal: checkin.goal ?? "", asked: Math.max(0, asked - 1) },
+            onEvent: (e) => send(e),
+          });
+          const userTurns = turns.filter((t) => t.role === "user").length + 1;
+          const closing = r.done || userTurns >= 4;
+          send({ type: "answer", answer: { text: r.text, note: "", sources: [], read: 0, model: r.model, cost: r.cost } });
+          if (closing) {
+            const conversation = [...turns, { role: "user" as const, text: q }, { role: "assistant" as const, text: r.text }];
+            const ex = await extractDiary(checkin.id, conversation);
+            if (ex.actions.length) send({ type: "command", actions: ex.actions, names: ex.names });
+            if (ex.facts.length) send({ type: "facts", facts: ex.facts });
+          }
+          await log("Com'è andata oggi?", null, `${closing ? "chiusa" : "risposta"} · ${((Date.now() - t0) / 1000).toFixed(1).replace(".", ",")} s · ${r.model}`);
+          send({ type: "done" });
+          try { controller.close(); } catch { /* già chiuso */ }
+          return;
+        }
 
         // Via veloce: se è solo un comando, le azioni arrivano da un unico passaggio del modello rapido.
         if (!expert) {

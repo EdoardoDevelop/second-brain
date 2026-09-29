@@ -27,7 +27,7 @@ export type Habit = {
 };
 
 /** Parole significative di un titolo: senza accenti, date, numeri, mesi, giorni e parole vuote. */
-function words(title: string): Set<string> {
+export function words(title: string): Set<string> {
   const t = title.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
     .replace(/\b\d{1,4}([/.-]\d{1,2}){1,2}\b/g, " ").replace(/\d+/g, " ").replace(/[^a-z\s]/g, " ");
   const days = new Set(WEEKDAYS.map((d) => d.normalize("NFD").replace(/[̀-ͯ]/g, "")));
@@ -42,7 +42,7 @@ function jaccard(a: Set<string>, b: Set<string>) {
 }
 
 /** Il nome dell'abitudine senza la data della singola volta: «Riunione di reparto del 23/9» → «Riunione di reparto». */
-function cleanLabel(title: string) {
+export function cleanLabel(title: string) {
   const t = title.replace(/\s*(?:[-–—,(]\s*)?(?:del(?:l')?\s+|di\s+|il\s+)?\d{1,4}[/.-]\d{1,2}(?:[/.-]\d{2,4})?\)?/g, "").replace(/\s{2,}/g, " ").replace(/[\s,;:–—-]+$/, "").trim();
   return t || title;
 }
@@ -56,7 +56,7 @@ const addDays = (d: string, n: number) => new Date(toMs(d) + n * DAY).toISOStrin
 const median = (l: number[]) => { const s = [...l].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
 
 /** Ritmo di una serie di date (distinte, ordinate), se c'è. */
-function cadenceOf(dates: string[]): Cadence | null {
+export function cadenceOf(dates: string[]): Cadence | null {
   const gaps = dates.slice(1).map((d, i) => Math.round((toMs(d) - toMs(dates[i])) / DAY));
   if (gaps.length < 2 || gaps.some((g) => g <= 0)) return null;
   const m = median(gaps);
@@ -73,7 +73,7 @@ function cadenceOf(dates: string[]): Cadence | null {
   return null;
 }
 
-function nextDate(c: Cadence, last: string, today: string): string {
+export function nextDate(c: Cadence, last: string, today: string): string {
   const step = c.kind === "weekly" ? 7 : c.kind === "biweekly" ? 14 : c.kind === "every" ? c.every! : 0;
   let next: string;
   if (c.kind === "monthly") {

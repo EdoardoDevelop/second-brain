@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".test-build",
+    "rootDir": ".",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "incremental": false,
+    "plugins": [],
+    "noEmitOnError": false,
+    "sourceMap": false
+  },
+  "include": ["tests/**/*.ts", "next-env.d.ts"]
+}

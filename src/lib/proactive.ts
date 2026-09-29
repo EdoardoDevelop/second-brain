@@ -10,6 +10,7 @@ import { budgetState, callJSON } from "./llm";
 import { log } from "./pipeline";
 import { commandContext } from "./queries";
 import { detectHabits, sameSeries, upcomingDeadlines } from "./habits";
+import { lastNightDiary } from "./checkin";
 import { getSetting, setSetting } from "./settings";
 
 /**
@@ -194,6 +195,7 @@ export function changesLine(c: Changes) {
 export async function morningBrief(): Promise<DailyBrief> {
   const today = await TOOL_BY_NAME.get("today")!.run({});
   const changes = await computeChanges();
+  const diary = await lastNightDiary().catch(() => null);
   const habitsSoon = (await detectHabits().catch(() => [])).filter((h) => h.daysToNext <= 1)
     .map((h) => ({ cosa: h.label, quando: h.daysToNext === 0 ? "oggi" : "domani", ritmo: h.cadenceLabel }));
   const empty = isEmpty(changes);
@@ -202,8 +204,8 @@ export async function morningBrief(): Promise<DailyBrief> {
   const out = await callJSON<z.infer<typeof BriefSchema>>({
     tier: "smart", task: "riepilogo_mattino", name: "riepilogo_mattino", maxTokens: 1200,
     messages: [
-      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights. Le abitudini in arrivo (cose che l'utente fa di solito oggi o domani) vanno ricordate in highlights." },
-      { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>${habitsSoon.length ? `\n<abitudini_in_arrivo>\n${JSON.stringify(habitsSoon)}\n</abitudini_in_arrivo>` : ""}\n<cambiato>\n${empty ? "Nulla di nuovo." : JSON.stringify(delta)}\n</cambiato>` },
+      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights. Le abitudini in arrivo (cose che l'utente fa di solito oggi o domani) vanno ricordate in highlights. Se c'è il racconto di ieri sera, puoi riprenderlo con naturalezza (es. «ieri mi hai detto che…») quando è utile per oggi." },
+      { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>${habitsSoon.length ? `\n<abitudini_in_arrivo>\n${JSON.stringify(habitsSoon)}\n</abitudini_in_arrivo>` : ""}${diary ? `\n<ieri_sera_mi_ha_raccontato>\n${diary}\n</ieri_sera_mi_ha_raccontato>` : ""}\n<cambiato>\n${empty ? "Nulla di nuovo." : JSON.stringify(delta)}\n</cambiato>` },
     ],
     jsonSchema: z.toJSONSchema(BriefSchema),
     parse: (v) => BriefSchema.safeParse(v) as { success: true; data: z.infer<typeof BriefSchema> } | { success: false },

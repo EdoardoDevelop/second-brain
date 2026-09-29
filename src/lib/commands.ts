@@ -5,7 +5,7 @@ import { aimItems, aims, attachments, facts, goals, itemPeople, items, links, pe
 import type { CommandAction } from "./ai";
 import { captureText } from "./capture";
 import { isoDay, reminderFields } from "./format";
-import { log } from "./pipeline";
+import { log, reindexSoon } from "./pipeline";
 import { emit } from "./webhooks";
 
 /**
@@ -177,6 +177,25 @@ ${a.text.trim()}` : a.text.trim(), updatedAt: new Date() }).where(eq(items.id, a
         if (!a.itemId || !a.targetId || a.itemId === a.targetId) continue;
         if (!(await mergeItems(a.itemId, a.targetId))) continue;
         break;
+      case "diary_note": {
+        // Nota di diario confermata dall'utente: entra direttamente in memoria (è il suo racconto, già rivisto).
+        if (!a.title?.trim() || !a.text?.trim()) continue;
+        const id = newId("it");
+        const now = new Date();
+        await db.insert(items).values({
+          id, kind: "note", status: "memory", type: "Nota", title: a.title.trim(), content: a.text.trim(), summary: a.summary?.trim() || null,
+          source: "Com'è andata oggi?", origin: "Diario", projectId: a.projectId, tags: a.tags?.length ? a.tags : ["diario"], createdAt: now, updatedAt: now, confirmedAt: now,
+        });
+        const wanted = new Set((a.peopleNames ?? []).map((n) => n.toLowerCase().trim()));
+        if (wanted.size) {
+          for (const p of await db.select({ id: people.id, name: people.name }).from(people)) {
+            if (wanted.has(p.name.toLowerCase().trim())) await db.insert(itemPeople).values({ itemId: id, personId: p.id }).onConflictDoNothing();
+          }
+        }
+        if (a.goalId?.startsWith("ob")) await db.insert(aimItems).values({ aimId: a.goalId, itemId: id }).onConflictDoNothing();
+        reindexSoon();
+        break;
+      }
       case "confirm_fact":
       case "end_fact":
       case "merge_facts":

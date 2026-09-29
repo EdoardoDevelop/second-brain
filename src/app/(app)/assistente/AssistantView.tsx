@@ -234,6 +234,7 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
     ["recent", "Ultimi 30 giorni"],
     ...scopes.projects.map((p): [string, string] => ["project:" + p.id, "Progetto · " + p.name]),
     ...scopes.people.map((p): [string, string] => ["person:" + p.id, "Persona · " + p.name]),
+    ...(scope.startsWith("diary:") ? [[scope, "Com'è andata oggi · diario"] as [string, string]] : []),
   ];
   const quick = scopeOptions.filter(([v]) => v === "all" || v === "recent" || v === scope || v.startsWith("project:")).slice(0, 6);
   const changeScope = (v: string) => { setScope(v); if (msgs.length) dirty.current = true; };
@@ -293,11 +294,11 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
                       {m.facts.map((f, k) => (
                         <div key={k} className="fact-card" data-state={f.state}>
                           <Icon name="ai" size={14} />
-                          <span style={{ flex: 1 }}>{f.state === "saved" ? "Ricorderò: " : f.state === "discarded" ? "Non lo ricorderò: " : "Vuoi che ricordi che "}<b style={{ fontWeight: 500 }}>{f.text}</b>{f.state === "review" ? "?" : ""}{f.replaces?.length ? <span className="muted" style={{ display: "block", fontSize: 12.5 }}>{f.state === "saved" ? "Non più vero: " : "Al posto di: "}{f.replaces.map((r) => `«${r.text}»`).join(", ")}</span> : null}</span>
+                          <span style={{ flex: 1 }}>{f.state === "saved" ? "Ricorderò: " : f.state === "discarded" ? "Non lo ricorderò: " : "Vuoi che ricordi che "}<b style={{ fontWeight: 500 }}>{f.text}</b>{f.validFrom && f.validFrom > new Date().toISOString().slice(0, 10) ? <span className="muted"> (dal {f.validFrom.split("-").reverse().join("/")})</span> : null}{f.state === "review" ? "?" : ""}{f.replaces?.length ? <span className="muted" style={{ display: "block", fontSize: 12.5 }}>{f.state === "saved" ? "Non più vero: " : "Al posto di: "}{f.replaces.map((r) => `«${r.text}»`).join(", ")}</span> : null}</span>
                           {f.state === "review" && (
                             <>
                               <button className="btn btn-ghost" onClick={() => patchAt(i, (r) => ({ facts: r.facts!.map((x, h) => (h === k ? { ...x, state: "discarded" } : x)) }))}>No</button>
-                              <button className="btn btn-primary" onClick={() => { addFact(f.text, "chat", { sourceRef: chatRef.current, replaces: (f.replaces ?? []).map((r) => r.id), category: f.category }); patchAt(i, (r) => ({ facts: r.facts!.map((x, h) => (h === k ? { ...x, state: "saved" } : x)) })); }}>Ricorda</button>
+                              <button className="btn btn-primary" onClick={() => { addFact(f.text, "chat", { sourceRef: chatRef.current, replaces: (f.replaces ?? []).map((r) => r.id), category: f.category, validFrom: f.validFrom }); patchAt(i, (r) => ({ facts: r.facts!.map((x, h) => (h === k ? { ...x, state: "saved" } : x)) })); }}>Ricorda</button>
                             </>
                           )}
                         </div>
@@ -364,7 +365,7 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && !busy) send(input); }}
-                  placeholder={focus?.startsWith("item:") && !msgs.length ? "Chiedi qualcosa su questo elemento…" : "Chiedi o chiedi di fare qualcosa…"}
+                  placeholder={scope.startsWith("diary:") ? "Racconta…" : focus?.startsWith("item:") && !msgs.length ? "Chiedi qualcosa su questo elemento…" : "Chiedi o chiedi di fare qualcosa…"}
                   disabled={!enabled}
                   style={{ flex: 1, minWidth: 0, border: 0, background: "none", color: "var(--color-text)", font: "inherit", fontSize: 16, outline: "none", height: 38 }}
                 />
@@ -555,7 +556,8 @@ function AnswerBlock({ a, scope, streaming, onFollowUp, onExpert, question }: {
           {a.followUps.map((q) => <button key={q} className="suggestion" onClick={() => onFollowUp(q)}><Icon name="arrowR" size={12} />{q}</button>)}
         </div>
       )}
-      {!streaming && (
+      {/* Nelle conversazioni del diario niente fonti, «Pensa meglio» o «Salva in memoria»: è una chiacchierata. */}
+      {!streaming && scope !== "diario" && (
         <div className="answer-tools">
           <span className="faint" style={{ fontSize: 12 }}>
             {a.sources.length ? `${a.sources.length} ${a.sources.length === 1 ? "fonte" : "fonti"}` : "Nessuna fonte citata"}

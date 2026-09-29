@@ -160,11 +160,15 @@ export const CommandActionSchema = z.object({
  * factId è il fatto su cui agire; otherFactId il doppione da togliere (merge_facts) o il fatto che lo sostituisce (end_fact).
  */
 export const FACT_KINDS = ["merge_facts", "end_fact", "confirm_fact"] as const;
-export type ActionKind = CommandKind | (typeof FACT_KINDS)[number];
+/** Azioni proposte solo da funzioni dell'app (non dal modello dei comandi): la nota di diario di «Com'è andata oggi?». */
+export const EXTRA_KINDS = ["diary_note"] as const;
+export type ActionKind = CommandKind | (typeof FACT_KINDS)[number] | (typeof EXTRA_KINDS)[number];
 export type CommandAction = Omit<z.infer<typeof CommandActionSchema>, "kind"> & {
   kind: ActionKind;
   factId?: string | null;
   otherFactId?: string | null;
+  /** diary_note: persone da collegare per nome (anche quelle create nella stessa conferma). */
+  peopleNames?: string[] | null;
   /** false = proposta come alternativa, non spuntata all'inizio. */
   on?: boolean;
 };
@@ -232,6 +236,7 @@ const QuickSchema = z.object({
     text: z.string().describe("Il fatto, in terza persona e breve"),
     replaces: z.array(z.string()).describe("id dei fatti già noti che questo rende non più veri (es. un nuovo lavoro sostituisce il vecchio); vuoto se nessuno"),
     category: z.enum(FACT_CATEGORIES).describe(FACT_CATEGORY_HELP),
+    validFrom: z.string().nullable().describe("Da quando vale, YYYY-MM-DD, se l'utente lo dice (anche nel futuro: «dal 19 ottobre» → 2026-10-19; «da lunedì»); null se non lo dice"),
   })).describe("Fatti stabili che l'utente racconta su di sé e che conviene ricordare (lavoro, ruolo, persone della sua vita e che cosa sono per lui, preferenze, abitudini), es. «Dal 19 ottobre 2026 lavora in Easytech», «Diego Bernardi è un ex collega di ComputerRivo e futuro collega in Easytech». Mai quelli già noti né cose passeggere. Vuoto se non ce ne sono."),
 });
 
@@ -269,7 +274,7 @@ ${text}
     const text = f.text.replace(/\s+/g, " ").trim().slice(0, 300);
     if (text.length <= 3 || lower.has(text.toLowerCase()) || seen.has(text.toLowerCase())) continue;
     seen.add(text.toLowerCase());
-    newFacts.push({ text, category: f.category, replaces: [...new Set(f.replaces)].filter((id) => byId.has(id)).map((id) => ({ id, text: byId.get(id)! })) });
+    newFacts.push({ text, category: f.category, validFrom: /^\d{4}-\d{2}-\d{2}$/.test(f.validFrom ?? "") ? f.validFrom : null, replaces: [...new Set(f.replaces)].filter((id) => byId.has(id)).map((id) => ({ id, text: byId.get(id)! })) });
     if (newFacts.length >= 4) break;
   }
   return { question: out.question, actions: out.question ? [] : cleanActions(out.actions, ctx), facts: newFacts };

@@ -4,7 +4,8 @@ import { Icon } from "@/components/ui";
 import { db, ready } from "@/lib/db";
 import { aiLog, apiKeys, backgrounds, items, people, projects, pushSubs, tasks, webhooks } from "@/lib/db/schema";
 import { getNotifyPrefs } from "@/lib/push";
-import { NotifySettings } from "./NotifySettings";
+import { CheckinSettings, NotifySettings } from "./NotifySettings";
+import { getCheckinPrefs } from "@/lib/checkin";
 import { ProfileSettings } from "./ProfileSettings";
 import Link from "next/link";
 import { SetCard, SettingsShell, type SettingsSection } from "./SettingsShell";
@@ -23,7 +24,7 @@ export default async function SettingsPage() {
   const jar = await cookies();
   const theme = parseMode(jar.get("sb_theme")?.value);
   const density = jar.get("sb_density")?.value === "compact" ? "compact" : "comfortable";
-  const [look, cfg, log, nItems, nProjects, nPeople, nTasks, notify, subs, bgs, profile, keys, hooks, bkStatus, bkList] = await Promise.all([
+  const [look, cfg, log, nItems, nProjects, nPeople, nTasks, notify, subs, bgs, profile, keys, hooks, bkStatus, bkList, checkinPrefs] = await Promise.all([
     getLook(),
     getAiConfig(),
     db.select({ id: aiLog.id, at: aiLog.at, action: aiLog.action, outcome: aiLog.outcome, title: items.title, itemId: aiLog.itemId })
@@ -40,6 +41,7 @@ export default async function SettingsPage() {
     db.select().from(webhooks).orderBy(webhooks.createdAt),
     backupStatus(),
     listBackups(),
+    getCheckinPrefs(),
   ]);
   // Indirizzo pubblico dell'app (dietro nginx arriva negli header inoltrati).
   const h = await headers();
@@ -79,9 +81,14 @@ export default async function SettingsPage() {
       id: "notifiche", title: "Notifiche", icon: "bell",
       desc: "Notifiche push sul telefono o sul computer, anche con l'app chiusa. Vanno attivate su ogni dispositivo.",
       content: (
-        <SetCard title="Notifiche push" icon="bell">
-          <NotifySettings prefs={notify} devices={subs.map((s) => ({ endpoint: s.endpoint, device: s.device, since: shortDate(s.createdAt) }))} />
-        </SetCard>
+        <>
+          <SetCard title="Notifiche push" icon="bell">
+            <NotifySettings prefs={notify} devices={subs.map((s) => ({ endpoint: s.endpoint, device: s.device, since: shortDate(s.createdAt) }))} />
+          </SetCard>
+          <SetCard title="Com'è andata oggi?" icon="ai" desc="La sera, quando c'è qualcosa di cui parlare, ti scrivo come farebbe un amico. Rispondi a voce o per iscritto: alla fine ti propongo cosa ricordare (nota di diario, persone, fatti, attività), e salvo solo quello che confermi.">
+            <CheckinSettings prefs={checkinPrefs} />
+          </SetCard>
+        </>
       ),
     },
     {

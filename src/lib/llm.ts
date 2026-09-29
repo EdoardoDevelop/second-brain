@@ -69,18 +69,24 @@ export async function budgetState(cfg?: AiConfig): Promise<BudgetState> {
 export async function userContext(): Promise<string> {
   const [profile, fs, as] = await Promise.all([
     getProfile(),
-    db.select({ text: facts.text, status: facts.status, validUntil: facts.validUntil, createdAt: facts.createdAt, lastConfirmedAt: facts.lastConfirmedAt }).from(facts).orderBy(desc(facts.createdAt)).limit(120),
+    db.select({ text: facts.text, status: facts.status, validFrom: facts.validFrom, validUntil: facts.validUntil, createdAt: facts.createdAt, lastConfirmedAt: facts.lastConfirmedAt }).from(facts).orderBy(desc(facts.createdAt)).limit(120),
     db.select({ id: aims.id, title: aims.title, due: aims.due, description: aims.description }).from(aims).where(eq(aims.status, "active")).limit(20),
   ]);
-  const current = fs.filter((f) => f.status === "confirmed").slice(0, 60);
-  const past = fs.filter((f) => f.status === "obsolete").slice(0, 15);
+  // Attuali: confermati e validi oggi. In arrivo: confermati con inizio futuro. Storia: non più veri o scaduti.
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Rome" }).format(new Date());
+  const isFuture = (f: (typeof fs)[number]) => f.status === "confirmed" && !!f.validFrom && f.validFrom > today;
+  const isPast = (f: (typeof fs)[number]) => f.status === "obsolete" || (f.status === "confirmed" && !!f.validUntil && f.validUntil < today);
+  const current = fs.filter((f) => f.status === "confirmed" && !isFuture(f) && !isPast(f)).slice(0, 60);
+  const upcoming = fs.filter(isFuture).slice(0, 10);
+  const past = fs.filter(isPast).slice(0, 15);
   const fmt = (d: string) => d.split("-").reverse().join("/");
   // I fatti confermati da tempo sono marcati: possono essere cambiati.
   const aged = (f: (typeof current)[number]) => { const a = factAge(f.lastConfirmedAt?.getTime() ?? null, f.createdAt.getTime()); return a.age === "fresh" ? "" : ` (${confirmedAgo(a.days)}${a.age === "stale" ? ": forse superato" : ""})`; };
   const known = current.length ? `\nFatti confermati dall'utente su di sé (usali quando sono utili, non ripeterli a vuoto; quelli confermati da molto tempo potrebbero essere cambiati: usali con cautela e, se contano per la risposta, chiedi se valgono ancora):\n${current.map((f) => "- " + f.text + aged(f)).join("\n")}` : "";
+  const soon = upcoming.length ? `\nIn arrivo (confermati, ma iniziano più avanti: non sono ancora la situazione attuale):\n${upcoming.map((f) => `- dal ${fmt(f.validFrom!)}: ${f.text}`).join("\n")}` : "";
   const history = past.length ? `\nNon più veri (solo storia: non usarli come situazione attuale):\n${past.map((f) => `- ${f.text}${f.validUntil ? ` (fino al ${fmt(f.validUntil)})` : ""}`).join("\n")}` : "";
   const goalsText = as.length ? `\nObiettivi personali dell'utente, ancora da raggiungere (se qualcosa è rilevante per uno di questi, dillo):\n${as.map((a) => `- ${a.title} [${a.id}]${a.due ? ` (entro il ${fmt(a.due)})` : ""}${a.description ? `: ${a.description.slice(0, 160)}` : ""}`).join("\n")}` : "";
-  return personaPrompt(profile) + known + history + goalsText;
+  return personaPrompt(profile) + known + soon + history + goalsText;
 }
 
 /** Errori che indicano un modello non utilizzabile con queste impostazioni (e non un problema passeggero). */

@@ -21,7 +21,8 @@ export async function todayFactQuestion(): Promise<FactQuestion | null> {
   const today = isoDay();
   let state: State | null = null;
   try { state = JSON.parse((await getSetting("fact_question")) ?? "null"); } catch { /* nessuna */ }
-  const rows = await db.select({ id: facts.id, text: facts.text, createdAt: facts.createdAt, lastConfirmedAt: facts.lastConfirmedAt }).from(facts).where(eq(facts.status, "confirmed"));
+  const rows = (await db.select({ id: facts.id, text: facts.text, createdAt: facts.createdAt, lastConfirmedAt: facts.lastConfirmedAt, validFrom: facts.validFrom }).from(facts).where(eq(facts.status, "confirmed")))
+    .filter((f) => !f.validFrom || f.validFrom <= today);
   const view = (f: (typeof rows)[number]): FactQuestion => ({ id: f.id, text: f.text, days: factAge(f.lastConfirmedAt?.getTime() ?? null, f.createdAt.getTime()).days });
 
   if (state?.day === today) {
@@ -43,6 +44,18 @@ export async function todayFactQuestion(): Promise<FactQuestion | null> {
     await setSetting("fact_asked", JSON.stringify(Object.fromEntries(Object.entries(asked).filter(([id]) => ids.has(id)))));
   }
   return pick;
+}
+
+/**
+ * Una volta al giorno: i fatti confermati con `valid_until` già passato (es. il vecchio lavoro sostituito da uno che
+ * iniziava oggi) diventano storia. Non cambia fatti senza data di fine.
+ */
+export async function expireFacts() {
+  const today = isoDay();
+  if ((await getSetting("facts_expired_day")) === today) return;
+  await setSetting("facts_expired_day", today);
+  const rows = await db.select({ id: facts.id, validUntil: facts.validUntil }).from(facts).where(eq(facts.status, "confirmed"));
+  for (const f of rows) if (f.validUntil && f.validUntil < today) await db.update(facts).set({ status: "obsolete" }).where(eq(facts.id, f.id));
 }
 
 /** La domanda di oggi ha avuto risposta (o è stata rimandata): per oggi non se ne fanno altre. */

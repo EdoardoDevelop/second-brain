@@ -28,6 +28,7 @@ import { buildOverview, forgetOverview, type Overview } from "./overview";
 import { closeFactQuestion, todayFactQuestion } from "./fact-question";
 import { detectHabits } from "./habits";
 import { listBackups, runBackup, type BackupStatus } from "./backup";
+import { DEFAULT_CHECKIN, saveCheckinPrefsRaw, type CheckinPrefs } from "./checkin";
 import { deliver, emit, WEBHOOK_EVENTS } from "./webhooks";
 import { createApiKey } from "./api-keys";
 import { randomBytes } from "node:crypto";
@@ -279,6 +280,23 @@ export async function deleteTask(id: string) {
   await guard();
   await db.delete(tasks).where(eq(tasks.id, id));
   refreshAll();
+}
+
+// ——— «Com'è andata oggi?» ———
+
+export async function saveCheckinPrefs(p: CheckinPrefs) {
+  await guard();
+  const hh = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const clean: CheckinPrefs = {
+    enabled: !!p.enabled,
+    from: hh.test(p.from) ? p.from : DEFAULT_CHECKIN.from,
+    to: hh.test(p.to) && p.to > p.from ? p.to : DEFAULT_CHECKIN.to,
+    weekend: ["always", "events", "never"].includes(p.weekend) ? p.weekend : "events",
+    generic: Math.max(0, Math.min(5, Math.round(Number(p.generic) || 0))),
+  };
+  await saveCheckinPrefsRaw(clean);
+  refreshAll();
+  return clean;
 }
 
 // ——— Backup ———
@@ -633,11 +651,16 @@ const dayBefore = (day: string) => isoDay(new Date(Date.parse(day + "T12:00:00Z"
  * Aggiunge un fatto confermato dall'utente (dalla chat, da un comando, da un suggerimento o scritto a mano).
  * `replaces`: fatti che il nuovo rende superati; diventano storia (obsolete, validi fino a ieri, sostituiti da questo).
  */
-export async function addFact(text: string, source = "manuale", opts: { sourceRef?: string | null; replaces?: string[]; origin?: FactOrigin; category?: FactCategory | null } = {}) {
+/**
+ * `validFrom`: da quando vale, se l'utente l'ha detto («dal 19 ottobre»), anche nel futuro. Un fatto futuro è confermato
+ * ma «in arrivo»: i fatti che sostituisce restano validi fino al giorno prima (poi `expireFacts()` li chiude).
+ */
+export async function addFact(text: string, source = "manuale", opts: { sourceRef?: string | null; replaces?: string[]; origin?: FactOrigin; category?: FactCategory | null; validFrom?: string | null } = {}) {
   await guard();
   const t = text.replace(/\s+/g, " ").trim().slice(0, 300);
   if (!t) return;
   const today = isoDay();
+  const from = opts.validFrom && /^\d{4}-\d{2}-\d{2}$/.test(opts.validFrom) ? opts.validFrom : today;
   const active = await db.select({ id: facts.id, text: facts.text }).from(facts).where(eq(facts.status, "confirmed"));
   const same = active.find((f) => f.text.toLowerCase() === t.toLowerCase());
   const now = new Date();
@@ -646,10 +669,11 @@ export async function addFact(text: string, source = "manuale", opts: { sourceRe
   else {
     id = newId("fa");
     const category = opts.category && (FACT_CATEGORIES as readonly string[]).includes(opts.category) ? opts.category : null;
-    await db.insert(facts).values({ id, text: t, source, createdAt: now, origin: opts.origin ?? "declared", status: "confirmed", sourceRef: opts.sourceRef ?? null, validFrom: today, lastConfirmedAt: now, category });
+    await db.insert(facts).values({ id, text: t, source, createdAt: now, origin: opts.origin ?? "declared", status: "confirmed", sourceRef: opts.sourceRef ?? null, validFrom: from, lastConfirmedAt: now, category });
   }
   const old = (opts.replaces ?? []).filter((r) => r !== id && active.some((f) => f.id === r));
-  if (old.length) await db.update(facts).set({ status: "obsolete", validUntil: dayBefore(today), supersededBy: id }).where(inArray(facts.id, old));
+  // Sostituiti: validi fino al giorno prima dell'inizio del nuovo; se l'inizio è futuro restano attuali fino ad allora.
+  if (old.length) await db.update(facts).set({ status: from > today ? "confirmed" : "obsolete", validUntil: dayBefore(from), supersededBy: id }).where(inArray(facts.id, old));
   await log(old.length ? "Fatto aggiornato" : "Fatto ricordato", null, old.length ? `${t} (sostituisce: ${active.filter((f) => old.includes(f.id)).map((f) => f.text).join("; ")})` : t);
   refreshAll();
 }
@@ -752,7 +776,9 @@ export async function saveChat(id: string | null, scope: string, msgs: ChatMsg[]
   const title = first && "text" in first ? first.text.replace(/\s+/g, " ").slice(0, 80) : "Nuova conversazione";
   const now = new Date();
   if (id) {
-    const res = await db.update(chats).set({ scope, msgs: JSON.stringify(clean), title, updatedAt: now }).where(eq(chats.id, id));
+    // Le conversazioni del diario tengono il loro titolo («Diario 19/10: …»).
+    const keep = scope.startsWith("diary:");
+    const res = await db.update(chats).set({ scope, msgs: JSON.stringify(clean), ...(keep ? {} : { title }), updatedAt: now }).where(eq(chats.id, id));
     if (res.rowsAffected) return id;
   }
   const newIdValue = newId("ch");
