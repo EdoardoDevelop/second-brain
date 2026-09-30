@@ -461,13 +461,14 @@ const NewsTopicsSchema = z.object({
 });
 
 /** Argomenti di attualità da seguire, ricavati da progetti, tag ed elementi recenti della memoria. */
-export async function newsTopics(memory: unknown, exclude: string[]) {
+export async function newsTopics(memory: unknown, exclude: string[], banned: string[] = []) {
   const r = await complete(
     NewsTopicsSchema,
     "argomenti_notizie",
     `Scegli da 3 a 5 argomenti di attualità da seguire nelle notizie per l'utente di un Second Brain personale, in base alla sua memoria.
 Preferisci temi concreti e ricorrenti (settori, tecnologie, normative, luoghi, organizzazioni, mercati) su cui escono davvero notizie.
-Evita nomi di persone private, dati personali, argomenti troppo generici ("lavoro", "progetti") e quelli già seguiti: ${exclude.join(", ") || "nessuno"}.
+Evita nomi di persone private, dati personali, argomenti troppo generici ("lavoro", "progetti") e quelli già seguiti: ${exclude.join(", ") || "nessuno"}.${banned.length ? `
+L'utente NON vuole notizie su: ${banned.join(", ")}. Niente argomenti su questi temi né vicini a essi.` : ""}
 Le query devono funzionare su Google News in italiano.`,
     `<memoria>\n${JSON.stringify(memory)}\n</memoria>`,
     1500,
@@ -484,12 +485,12 @@ const NewsRankSchema = z.object({
 });
 
 /** Sceglie tra i titoli le notizie più utili per l'utente, con il motivo. */
-export async function rankNews(memory: unknown, articles: { id: string; title: string; source: string; topic: string }[], max: number) {
+export async function rankNews(memory: unknown, articles: { id: string; title: string; source: string; topic: string }[], max: number, banned: string[] = []) {
   const r = await complete(
     NewsRankSchema,
     "notizie_per_te",
     `Sei il filtro notizie di un Second Brain personale. Dai titoli forniti scegli al massimo ${max} notizie davvero utili o interessanti per l'utente, in base alla sua memoria.
-Scarta doppioni, clickbait, gossip e notizie solo vagamente collegate. Per ogni scelta scrivi un motivo breve e concreto che citi il progetto o il tema della memoria.
+Scarta doppioni, clickbait, gossip e notizie solo vagamente collegate.${banned.length ? ` Scarta anche le notizie su temi che l'utente ha escluso, anche se detti con altre parole: ${banned.join(", ")}.` : ""} Per ogni scelta scrivi un motivo breve e concreto che citi il progetto o il tema della memoria.
 Usa solo gli id forniti.`,
     `<memoria>\n${JSON.stringify(memory)}\n</memoria>\n<notizie>\n${JSON.stringify(articles)}\n</notizie>`,
     2500,

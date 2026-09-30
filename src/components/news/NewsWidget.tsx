@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { Icon } from "@/components/ui";
 import { captureNews, hideNews, refreshNews, saveNewsConfig } from "@/lib/actions";
 import { relTime } from "@/lib/format";
-import type { Article, CapturedMap, NewsConfig, NewsFeed } from "@/lib/news";
+import { isExcluded, type Article, type CapturedMap, type NewsConfig, type NewsFeed } from "@/lib/news";
 
 const FOR_YOU = "__per_te";
 const ALL = "__tutte";
@@ -35,9 +35,9 @@ export function NewsWidget({ config, feed, hidden, captured, aiOn }: { config: N
     if (forYouOn) t.push({ id: FOR_YOU, label: "Per te" });
     t.push({ id: ALL, label: "Tutte" });
     for (const x of cfg.topics) t.push({ id: x, label: x });
-    for (const a of feed?.autoTopics ?? []) if (!cfg.topics.some((x) => x.toLowerCase() === a.label.toLowerCase())) t.push({ id: a.label, label: a.label, auto: true });
+    for (const a of feed?.autoTopics ?? []) if (!cfg.topics.some((x) => x.toLowerCase() === a.label.toLowerCase()) && !isExcluded(`${a.label} ${a.query}`, cfg.excluded)) t.push({ id: a.label, label: a.label, auto: true });
     return t;
-  }, [forYouOn, cfg.topics, feed?.autoTopics]);
+  }, [forYouOn, cfg.topics, cfg.excluded, feed?.autoTopics]);
   const [tab, setTab] = useState(tabs[0]?.id ?? ALL);
   const current = tabs.some((t) => t.id === tab) ? tab : tabs[0]?.id ?? ALL;
 
@@ -46,7 +46,7 @@ export function NewsWidget({ config, feed, hidden, captured, aiOn }: { config: N
   const list = (current === FOR_YOU
     ? feed!.forYou.map((id) => byId.get(id)).filter((a): a is Article => !!a)
     : (feed?.articles ?? []).filter((a) => current === ALL || a.topic === current)
-  ).filter((a) => !hiddenSet.has(a.id)).slice(0, cfg.count);
+  ).filter((a) => !hiddenSet.has(a.id) && !isExcluded(a.title, cfg.excluded)).slice(0, cfg.count);
 
   const refresh = (newTopics = false) => startRefresh(() => refreshNews(newTopics));
   const updated = feed ? new Intl.DateTimeFormat("it-IT", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Rome" }).format(new Date(feed.at)) : null;
@@ -134,8 +134,16 @@ function Settings({ cfg, setCfg, feed, aiOn, refreshing, regenerate, onDone }: {
   cfg: NewsConfig; setCfg: (c: NewsConfig) => void; feed: NewsFeed | null; aiOn: boolean; refreshing: boolean; regenerate: () => void; onDone: () => void;
 }) {
   const [text, setText] = useState("");
+  const [noText, setNoText] = useState("");
   const [pending, start] = useTransition();
   const save = (next: NewsConfig) => { setCfg(next); start(() => saveNewsConfig(next)); };
+  const exclude = (raw: string) => {
+    const v = raw.replace(/s+/g, " ").trim();
+    setNoText("");
+    if (!v || cfg.excluded.some((t) => t.toLowerCase() === v.toLowerCase()) || cfg.excluded.length >= 20) return;
+    // Un argomento escluso non resta tra quelli seguiti.
+    save({ ...cfg, excluded: [...cfg.excluded, v], topics: cfg.topics.filter((t) => t.toLowerCase() !== v.toLowerCase()) });
+  };
   const add = () => {
     const v = text.replace(/\s+/g, " ").trim();
     if (!v || cfg.topics.some((t) => t.toLowerCase() === v.toLowerCase()) || cfg.topics.length >= 12) return setText("");
@@ -167,6 +175,25 @@ function Settings({ cfg, setCfg, feed, aiOn, refreshing, regenerate, onDone }: {
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <span className="muted" style={{ fontSize: 12 }}>Argomenti da escludere</span>
+        {cfg.excluded.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {cfg.excluded.map((t) => (
+              <span key={t} className="nw-chip nw-chip-no">
+                <Icon name="eyeOff" size={11} />{t}
+                <button onClick={() => save({ ...cfg, excluded: cfg.excluded.filter((x) => x !== t) })} aria-label={`Non escludere più ${t}`}><Icon name="x" size={12} /></button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          <input className="input" value={noText} onChange={(e) => setNoText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") exclude(noText); }} placeholder="es. calcio, gossip, oroscopo…" aria-label="Argomento da escludere" style={{ flex: 1, minWidth: 0 }} />
+          <button className="btn btn-secondary" onClick={() => exclude(noText)} disabled={!noText.trim()} style={{ gap: 6 }}><Icon name="eyeOff" size={14} />Escludi</button>
+        </div>
+        <span className="faint" style={{ fontSize: 12 }}>Spariscono le notizie che lo nominano nel titolo; l&apos;IA non lo propone e scarta anche quelle che ne parlano con altre parole.</span>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 14, cursor: aiOn ? "pointer" : "default", opacity: aiOn ? 1 : 0.6 }}>
           <input type="checkbox" checked={cfg.auto && aiOn} disabled={!aiOn} onChange={(e) => save({ ...cfg, auto: e.target.checked })} style={{ marginTop: 3 }} />
           <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -178,10 +205,11 @@ function Settings({ cfg, setCfg, feed, aiOn, refreshing, regenerate, onDone }: {
         </label>
         {cfg.auto && aiOn && (
           <div className="nw-auto">
-            {feed?.autoTopics.length ? feed.autoTopics.map((t) => (
+            {feed?.autoTopics.some((t) => !isExcluded(`${t.label} ${t.query}`, cfg.excluded)) ? feed.autoTopics.filter((t) => !isExcluded(`${t.label} ${t.query}`, cfg.excluded)).map((t) => (
               <div key={t.label} style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 13 }}>
                 <span style={{ color: "var(--accent-text)", display: "flex" }}><Icon name="ai" size={12} /></span>
-                <span><b style={{ fontWeight: 500 }}>{t.label}</b> <span className="muted">— {t.why}</span></span>
+                <span style={{ flex: 1 }}><b style={{ fontWeight: 500 }}>{t.label}</b> <span className="muted">— {t.why}</span></span>
+                <button className="btn btn-ghost" onClick={() => exclude(t.label)} title={`Non mostrarmi più notizie su «${t.label}»`} style={{ height: 24, padding: "0 6px", gap: 4, fontSize: 12, color: "var(--muted)", flex: "none" }}><Icon name="eyeOff" size={12} />Escludi</button>
               </div>
             )) : <span className="muted" style={{ fontSize: 13 }}>Ancora nessun argomento: premi Rigenera.</span>}
             <button className="btn btn-ghost" onClick={regenerate} disabled={refreshing} style={{ alignSelf: "flex-start", gap: 6, height: 30, color: "var(--accent-text)" }}>

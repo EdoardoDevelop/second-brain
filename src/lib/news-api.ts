@@ -6,7 +6,7 @@ import { items, projects } from "./db/schema";
 import { aiEnabled, newsTopics, rankNews } from "./ai";
 import { log } from "./pipeline";
 import { getSetting, setSetting } from "./settings";
-import type { Article, AutoTopic, NewsConfig, NewsFeed } from "./news";
+import { isExcluded, type Article, type AutoTopic, type NewsConfig, type NewsFeed } from "./news";
 
 /**
  * Notizie da Google News (feed RSS di ricerca, gratuiti, per uso personale).
@@ -25,9 +25,11 @@ const decode = (s: string) =>
     .trim();
 const tag = (xml: string, name: string) => xml.match(new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`))?.[1];
 
-async function fetchTopic(query: string, topic: string, auto: boolean, lang: "it" | "en"): Promise<Article[]> {
+async function fetchTopic(query: string, topic: string, auto: boolean, lang: "it" | "en", excluded: string[] = []): Promise<Article[]> {
   const loc = lang === "it" ? "hl=it&gl=IT&ceid=IT:it" : "hl=en-US&gl=US&ceid=US:en";
-  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(`${query} when:7d`)}&${loc}`;
+  // Gli esclusi anche nella ricerca (-"parola"), così i posti liberi vanno ad altre notizie; il filtro sui titoli resta comunque.
+  const minus = excluded.slice(0, 10).map((e) => ` -"${e.replace(/"/g, "")}"`).join("");
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(`${query}${minus} when:7d`)}&${loc}`;
   try {
     const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(8000), headers: { "User-Agent": "Mozilla/5.0 (Second Brain; lettore personale)" } });
     if (!res.ok) throw new Error(`Google News ${res.status}`);
@@ -69,13 +71,13 @@ async function memorySnapshot() {
 async function getAutoTopics(cfg: NewsConfig, force: boolean, memory: unknown): Promise<AutoTopic[]> {
   const saved = JSON.parse((await getSetting("news_topics")) ?? "null") as { at: number; topics: AutoTopic[] } | null;
   if (saved && !force && Date.now() - saved.at < TOPICS_TTL) return saved.topics;
-  const topics = await newsTopics(memory, cfg.topics);
+  const topics = await newsTopics(memory, cfg.topics, cfg.excluded);
   await setSetting("news_topics", JSON.stringify({ at: Date.now(), topics }));
   await log("Notizie: argomenti dalla memoria", null, topics.map((t) => t.label).join(", ") || "nessuno");
   return topics;
 }
 
-const cfgKey = (c: NewsConfig) => JSON.stringify([c.topics, c.auto, c.intl, c.count]);
+const cfgKey = (c: NewsConfig) => JSON.stringify([c.topics, c.auto, c.intl, c.count, c.excluded]);
 let inflight: { key: string; p: Promise<NewsFeed> } | null = null;
 
 /** Notizie della Home: dalla cache se recenti, altrimenti le raccoglie (e le fa scegliere all'IA). */
@@ -99,7 +101,8 @@ async function build(cfg: NewsConfig, newTopics: boolean): Promise<NewsFeed> {
   const memory = useAi ? await memorySnapshot() : null;
   let autoTopics: AutoTopic[] = [];
   if (useAi) {
-    try { autoTopics = await getAutoTopics(cfg, newTopics, memory); }
+    // Gli argomenti salvati possono essere di prima di un'esclusione nuova: si filtrano comunque.
+    try { autoTopics = (await getAutoTopics(cfg, newTopics, memory)).filter((a) => !isExcluded(`${a.label} ${a.query}`, cfg.excluded)); }
     catch (e) { aiError = (e as Error).message; await log("Notizie: argomenti dalla memoria", null, `Errore: ${aiError}`); }
   }
 
@@ -108,11 +111,11 @@ async function build(cfg: NewsConfig, newTopics: boolean): Promise<NewsFeed> {
     ...cfg.topics.map((t) => ({ query: t, topic: t, auto: false })),
     ...autoTopics.filter((a) => !cfg.topics.some((t) => t.toLowerCase() === a.label.toLowerCase())).map((a) => ({ query: a.query, topic: a.label, auto: true })),
   ];
-  const lists = await Promise.all(jobs.flatMap((j) => langs.map((l) => fetchTopic(j.query, j.topic, j.auto, l))));
+  const lists = await Promise.all(jobs.flatMap((j) => langs.map((l) => fetchTopic(j.query, j.topic, j.auto, l, cfg.excluded))));
 
   // Doppioni: stesso link o stesso titolo (la stessa notizia ripresa da più argomenti).
   const seen = new Set<string>();
-  const articles = lists.flat().sort((a, b) => b.published - a.published).filter((a) => {
+  const articles = lists.flat().sort((a, b) => b.published - a.published).filter((a) => !isExcluded(a.title, cfg.excluded)).filter((a) => {
     const k = a.title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().slice(0, 70);
     if (seen.has(a.id) || seen.has(k)) return false;
     seen.add(a.id); seen.add(k);
@@ -123,7 +126,7 @@ async function build(cfg: NewsConfig, newTopics: boolean): Promise<NewsFeed> {
   if (useAi && articles.length) {
     try {
       const candidates = articles.slice(0, 60);
-      const picks = await rankNews(memory, candidates.map((a) => ({ id: a.id, title: a.title, source: a.source, topic: a.topic })), cfg.count);
+      const picks = await rankNews(memory, candidates.map((a) => ({ id: a.id, title: a.title, source: a.source, topic: a.topic })), cfg.count, cfg.excluded);
       for (const p of picks) {
         const a = articles.find((x) => x.id === p.id)!;
         a.reason = p.reason;

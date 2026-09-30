@@ -6,6 +6,7 @@ import { confirmedAgo, factAge } from "../src/lib/fact-age";
 import { cadenceLabel, cadenceOf, cleanLabel, nextDate, sameSeries } from "../src/lib/habits";
 import { dueLabel, isoDay } from "../src/lib/format";
 import { speechText } from "../src/lib/speech";
+import { isExcluded, parseNewsConfig } from "../src/lib/news";
 
 const DAY = 86400000;
 
@@ -77,4 +78,17 @@ test("scadenze: l'anno compare solo se non è quello corrente", () => {
 
 test("lettura ad alta voce: niente citazioni, grassetti, elenchi e indirizzi", () => {
   assert.equal(speechText("Il **Poco F6 Pro** ⟦it_123⟧ va bene.\n\n- batteria\n- schermo https://example.com/x [[FINE]]"), "Il Poco F6 Pro va bene. batteria, schermo link");
+});
+
+test("notizie: argomenti esclusi a parole intere, con singolare e plurale", () => {
+  const no = ["calcio", "elezione", "Belen Rodriguez"];
+  assert.equal(isExcluded("Serie A, il calcio italiano in crisi", no), true);
+  assert.equal(isExcluded("Càlcio: risultati", no), true);
+  assert.equal(isExcluded("Elezioni regionali, i risultati", no), true);
+  assert.equal(isExcluded("Gossip: Belén Rodríguez in vacanza", no), true);
+  assert.equal(isExcluded("Il calciatore dell'anno", no), false);
+  assert.equal(isExcluded("Calcium, nuovo framework", no), false);
+  assert.equal(isExcluded("Qualsiasi titolo", []), false);
+  assert.deepEqual(parseNewsConfig(JSON.stringify({ topics: ["IA"] })).excluded, []);
+  assert.deepEqual(parseNewsConfig(JSON.stringify({ excluded: [" gossip ", "Gossip", ""] })).excluded, ["gossip"]);
 });
