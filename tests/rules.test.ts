@@ -7,6 +7,7 @@ import { cadenceLabel, cadenceOf, cleanLabel, nextDate, sameSeries } from "../sr
 import { dueLabel, isoDay } from "../src/lib/format";
 import { speechText } from "../src/lib/speech";
 import { isExcluded, parseNewsConfig } from "../src/lib/news";
+import { factKey, freshFacts, isAboutUser, parseBirth } from "../src/lib/fact-rules";
 
 const DAY = 86400000;
 
@@ -91,4 +92,38 @@ test("notizie: argomenti esclusi a parole intere, con singolare e plurale", () =
   assert.equal(isExcluded("Qualsiasi titolo", []), false);
   assert.deepEqual(parseNewsConfig(JSON.stringify({ topics: ["IA"] })).excluded, []);
   assert.deepEqual(parseNewsConfig(JSON.stringify({ excluded: [" gossip ", "Gossip", ""] })).excluded, ["gossip"]);
+});
+
+// ——— Fatti su di te: stesso significato e date di nascita ———
+
+test("factKey: lo stesso fatto con parole, persona o formato diversi", () => {
+  assert.equal(factKey("Sono nato il 29/12/1986"), factKey("È nato il 29 dicembre 1986"));
+  assert.equal(factKey("Il 29 dicembre è il mio compleanno"), factKey("Il suo compleanno è il 29 dicembre"));
+  assert.equal(factKey("Fa i lavori di casa il sabato"), factKey("fa i lavori di casa il Sabato."));
+  assert.notEqual(factKey("È nato il 29 dicembre 1986"), factKey("È nato il 28 dicembre 1986"));
+  assert.notEqual(factKey("Lavora in Easytech"), factKey("Lavora in ComputerRivo"));
+});
+
+test("freshFacts: scarta i già noti e i doppioni della stessa proposta", () => {
+  const fresh = freshFacts([{ text: "Sono nato il 29/12/1986" }]);
+  assert.equal(fresh("È nato il 29 dicembre 1986"), false);
+  assert.equal(fresh("Usa uno Xiaomi 15T Pro"), true);
+  assert.equal(fresh("usa uno xiaomi 15T pro"), false);
+});
+
+test("parseBirth: date in numeri, per esteso, senza anno", () => {
+  assert.deepEqual(parseBirth("È nato il 29 dicembre 1986"), { day: 29, month: 12, year: 1986 });
+  assert.deepEqual(parseBirth("Sono nato il 29/12/1986"), { day: 29, month: 12, year: 1986 });
+  assert.deepEqual(parseBirth("Il 29 dicembre è il mio compleanno. Sono nato nel 1986"), { day: 29, month: 12, year: 1986 });
+  assert.deepEqual(parseBirth("Clelia compie gli anni il 3 maggio"), { day: 3, month: 5, year: null });
+  assert.equal(parseBirth("Dal 19/10/2026 lavora in Easytech"), null);
+  assert.equal(parseBirth("È nato il 45 dicembre"), null);
+});
+
+test("isAboutUser: la nascita dell'utente, non di altri", () => {
+  assert.equal(isAboutUser("È nato il 29 dicembre 1986"), true);
+  assert.equal(isAboutUser("Edoardo è nato il 29 dicembre 1986", "Edoardo"), true);
+  assert.equal(isAboutUser("Il suo compleanno è il 29 dicembre"), true);
+  assert.equal(isAboutUser("Il 29 dicembre è il mio compleanno"), true);
+  assert.equal(isAboutUser("La figlia è nata il 3 maggio 2019"), false);
 });

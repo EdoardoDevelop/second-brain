@@ -4,7 +4,7 @@ import { and, desc, eq, gte, inArray, lt } from "drizzle-orm";
 import { db, newId } from "./db";
 import { aims, chats, checkins, facts, itemPeople, items, people, projects, tasks, type CheckinEvent } from "./db/schema";
 import type { ChatMsg, ProposedFact } from "./chat";
-import type { CommandAction } from "./ai";
+import { FACT_RULES, refineFacts, type CommandAction } from "./ai";
 import { isoDay } from "./format";
 import { budgetState, callJSON } from "./llm";
 import { log } from "./pipeline";
@@ -203,8 +203,9 @@ const ExtractSchema = z.object({
   })).describe("Persone nominate nella conversazione, con quello che l'utente ne ha detto. Se l'utente parla di qualcuno senza dirne il nome (es. «il titolare»), non attribuirlo a una persona nota: indicala solo se ne dice il nome. Ruolo e organizzazione solo se detti o chiari dal contesto (es. il titolare della nuova azienda → org = quell'azienda). Vuoto se nessuna."),
   facts: z.array(z.object({
     text: z.string().describe("Fatto stabile sull'utente, in terza persona"),
-    replaces: z.array(z.string()).describe("id dei fatti noti che questo rende non più veri"),
-    validFrom: z.string().nullable().describe("Da quando vale, YYYY-MM-DD, se detto; null altrimenti"),
+    replaces: z.array(z.string()).describe("id dei fatti noti che questo cambia o corregge; vuoto se dicono la stessa cosa"),
+    validFrom: z.string().nullable().describe("Da quando vale, YYYY-MM-DD, se detto; null altrimenti o se permanent"),
+    permanent: z.boolean().describe("true se è vero da sempre e non cambierà (data e luogo di nascita, genitori)"),
   })).describe("Solo fatti stabili e nuovi (lavoro, ruolo, abitudini, preferenze durature, cose che possiede e usa: es. «Usa uno Xiaomi 15T Pro»), mai quelli già noti né criteri legati a una sola decisione del momento (quelli vanno nel diario). Vuoto se non ce ne sono."),
   tasks: z.array(z.object({ title: z.string(), due: z.string().nullable().describe("YYYY-MM-DD se detto") })).describe("Cose da fare emerse (es. «devo mandare i documenti all'HR entro venerdì»). Vuoto se nessuna."),
   projectId: z.string().nullable().describe("id di un progetto solo se la conversazione parla proprio di quel progetto (es. «Casa» solo per i lavori di casa); il lavoro e la vita in generale non sono progetti: null"),
@@ -227,7 +228,7 @@ export async function extractDiary(checkinId: string, conversation: { role: "use
   const out = await callJSON<z.infer<typeof ExtractSchema>>({
     tier: "smart", task: "com_e_andata", name: "diario_estrazione", maxTokens: 2500, temperature: 0, persona: false,
     messages: [
-      { role: "system", content: "Dalla conversazione serale tra l'utente e il suo Second Brain ricava cosa conviene ricordare, leggendo tutta la conversazione (non solo il primo messaggio). Solo ciò che l'utente ha detto davvero, niente supposizioni. Usa gli id noti quando una persona, un progetto o un obiettivo è già in memoria." },
+      { role: "system", content: "Dalla conversazione serale tra l'utente e il suo Second Brain ricava cosa conviene ricordare, leggendo tutta la conversazione (non solo il primo messaggio). Solo ciò che l'utente ha detto davvero, niente supposizioni. Usa gli id noti quando una persona, un progetto o un obiettivo è già in memoria.\n" + FACT_RULES },
       { role: "user", content: `<oggi>${isoDay()}</oggi>\n<motivo_del_check_in>\n${(c?.events ?? []).map((e) => e.text).join("\n") || "check-in generico"}\n</motivo_del_check_in>\n<persone_note>${JSON.stringify(pp)}</persone_note>\n<fatti_noti>${JSON.stringify(fs)}</fatti_noti>\n<progetti>${JSON.stringify(ps)}</progetti>\n<obiettivi_personali>${JSON.stringify(as)}</obiettivi_personali>\n<conversazione>\n${conversation.map((t) => `${t.role === "user" ? "Utente" : "Second Brain"}: ${t.text}`).join("\n")}\n</conversazione>` },
     ],
     jsonSchema: z.toJSONSchema(ExtractSchema),
@@ -236,7 +237,6 @@ export async function extractDiary(checkinId: string, conversation: { role: "use
 
   const personIds = new Set(pp.map((p) => p.id));
   const byName = new Map(pp.map((p) => [p.name.toLowerCase().trim(), p.id]));
-  const factText = new Map(fs.map((f) => [f.id, f.text]));
   const projectId = out.projectId && ps.some((p) => p.id === out.projectId) ? out.projectId : null;
   const aimId = out.aimId && as.some((a) => a.id === out.aimId) ? out.aimId : null;
   const nul = { text: null, title: null, goalId: null, taskId: null, due: null, time: null, remind: null, prio: null, projectId: null, itemId: null, targetId: null, summary: null, tags: null, removeTags: null, addPeople: null, reason: null, conflict: null, status: null, pct: null, next: null, description: null, personId: null, name: null, role: null, org: null, email: null, note: null };
@@ -263,8 +263,7 @@ export async function extractDiary(checkinId: string, conversation: { role: "use
     projectId, goalId: aimId, peopleNames: [...new Set(mentioned)],
   } as CommandAction);
 
-  const factsOut: ProposedFact[] = out.facts.filter((f) => f.text.trim() && !fs.some((k) => k.text.toLowerCase() === f.text.trim().toLowerCase())).slice(0, 4)
-    .map((f) => ({ text: f.text.trim(), validFrom: day(f.validFrom), replaces: f.replaces.filter((id) => factText.has(id)).map((id) => ({ id, text: factText.get(id)! })) }));
+  const factsOut: ProposedFact[] = refineFacts(out.facts.map((f) => ({ ...f, validFrom: day(f.validFrom) })), fs, 4);
 
   const names: Record<string, string> = Object.fromEntries([...pp.map((p) => [p.id, p.name]), ...ps.map((p) => [p.id, p.name]), ...as.map((a) => [a.id, a.title])]);
   await db.update(checkins).set({ status: "closed", closedAt: new Date(), proposals: { actions, facts: factsOut } }).where(eq(checkins.id, checkinId));

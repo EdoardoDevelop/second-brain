@@ -172,5 +172,13 @@ export async function dailyDigestTick() {
   const news = await computeChanges().then(changesLine).catch(() => "");
   if (news) list.push(news);
   const { name } = await getProfile();
+  const { upcomingBirthdays } = await import("./birthdays");
+  const bdays = await upcomingBirthdays(0).catch(() => []);
+  const mine = bdays.find((b) => b.user);
+  for (const b of bdays) if (!b.user) list.unshift(`🎂 Oggi compie gli anni ${b.who}${b.age ? ` (${b.age})` : ""}`);
+  if (mine) {
+    await sendPush({ title: `Buon compleanno${name ? `, ${name}` : ""}! 🎂`, body: [`${mine.age ? `${mine.age} anni: ` : ""}${head}`, ...list].join("\n"), url: "/", tag: "daily" });
+    return;
+  }
   await sendPush({ title: `Buongiorno${name ? `, ${name}` : ""}! ${head.charAt(0).toUpperCase() + head.slice(1)}`, body: list.join("\n") || "Giornata libera: buon lavoro!", url: "/", tag: "daily" });
 }

@@ -68,7 +68,7 @@ export function CommandBar({ onClose, startRecording }: { onClose: () => void; s
       const res = await interpret(input);
       if ("error" in res) { setError(res.error); setPhase("idle"); return; }
       if (input.audio && openOverview(res.transcript)) return;
-      setProposal({ ...res, actions: res.actions.map((a) => ({ ...a, on: true })), facts: res.facts.map((f): Fact => ({ ...f, state: "review" })) });
+      setProposal({ ...res, actions: res.actions.map((a) => ({ ...a, on: a.on !== false })), facts: res.facts.map((f): Fact => ({ ...f, state: "review" })) });
       if (input.audio) setText(res.transcript);
       setPhase("review");
     });
@@ -95,7 +95,7 @@ export function CommandBar({ onClose, startRecording }: { onClose: () => void; s
   const decideFact = (k: number, keep: boolean) => {
     const f = proposal?.facts[k];
     if (!f) return;
-    if (keep) addFact(f.text, "comando", { replaces: f.replaces.map((r) => r.id), category: f.category, validFrom: f.validFrom });
+    if (keep) addFact(f.text, "comando", { replaces: f.replaces.map((r) => r.id), category: f.category, validFrom: f.validFrom, permanent: f.permanent });
     setProposal((p) => p && { ...p, facts: p.facts.map((x, h) => (h === k ? { ...x, state: keep ? "saved" : "discarded" } : x)) });
   };
 

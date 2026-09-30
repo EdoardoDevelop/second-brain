@@ -3,7 +3,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "./db";
 import { aims, FACT_CATEGORIES, facts as factsTable, itemPeople, items, people, projects, tasks, type FactCategory } from "./db/schema";
 import type { ProposedFact } from "./chat";
-import { cleanActions, commandActionJsonSchema, FACT_CATEGORY_HELP, type ChatTurn, type CommandAction, type CommandContext } from "./ai";
+import { cleanActions, commandActionJsonSchema, FACT_CATEGORY_HELP, FACT_RULES, refineFacts, type ChatTurn, type CommandAction, type CommandContext } from "./ai";
 import { summarizeItems, TOOL_BY_NAME } from "./api-core";
 import { isoDay } from "./format";
 import { callLLM, type LlmMessage, type LlmTool } from "./llm";
@@ -90,7 +90,8 @@ function toolDefs(): LlmTool[] {
           fact: { type: "string", description: "Il fatto, in terza persona, breve (es. «Lavora come geometra a Milano»)" },
           replaces: { type: "array", items: { type: "string" }, description: "Testo esatto dei fatti già confermati che questo rende non più veri (es. il lavoro precedente); vuoto se nessuno" },
           category: { type: "string", enum: [...FACT_CATEGORIES], description: FACT_CATEGORY_HELP },
-          valid_from: { type: "string", description: "Da quando vale, YYYY-MM-DD, se l'utente lo dice (anche nel futuro: «dal 19 ottobre» → 2026-10-19; «da lunedì»); null se non lo dice" },
+          valid_from: { type: "string", description: "Da quando vale, YYYY-MM-DD, se l'utente lo dice (anche nel futuro: «dal 19 ottobre» → 2026-10-19; «da lunedì»); null se non lo dice o se permanent" },
+          permanent: { type: "boolean", description: "true se è vero da sempre e non cambierà (data e luogo di nascita, genitori)" },
         },
         required: ["fact"],
       },
@@ -202,6 +203,7 @@ Come lavori:
 - Non scrivere nulla prima di aver usato gli strumenti necessari: niente "Ora cerco…".
 - Richieste di modifica (aggiungere, completare, spostare, collegare, archiviare, ricordare di…, "segna che…") → propose_actions con le azioni. Non dire mai che le hai eseguite: l'utente le conferma. Date relative convertite in YYYY-MM-DD rispetto a oggi; il nome di un giorno indica la sua prossima occorrenza dopo oggi.
 - Quando l'utente racconta qualcosa di stabile su di sé (ruolo, lavoro, persone della sua vita e chi sono per lui, preferenze, abitudini) proponi remember_fact, un fatto per chiamata. Non per cose passeggere né già note.
+${FACT_RULES}
 ${o.mode === "command" ? "- Questa richiesta arriva dalla barra comandi: preferisci proporre azioni; rispondi a parole solo se è una domanda.\n" : ""}
 Formato della risposta:
 - Diretta e concisa: 1-3 paragrafi brevi separati da una riga vuota; per passi o punti un elenco con righe che iniziano con "- ". **Grassetto** per le parole chiave. Niente titoli.
@@ -254,7 +256,7 @@ export async function runAgent(o: {
   const read = new Set<string>();
   const steps: string[] = [];
   const proposed: unknown[] = [];
-  const facts: { text: string; replaces: string[]; category: FactCategory | null; validFrom: string | null }[] = [];
+  const facts: { text: string; replaces: string[]; category: FactCategory | null; validFrom: string | null; permanent: boolean }[] = [];
   let cost = 0;
   let model = "";
   let usedTier: AiTier = tier;
@@ -336,16 +338,14 @@ export async function runAgent(o: {
     const known = await db.select({ id: factsTable.id, text: factsTable.text }).from(factsTable).where(eq(factsTable.status, "confirmed"));
     const norm = (x: string) => x.toLowerCase().replace(/[«»"'.]/g, "").replace(/\s+/g, " ").trim();
     const find = (x: string) => known.find((k) => norm(k.text) === norm(x)) ?? known.find((k) => norm(k.text).includes(norm(x)) || norm(x).includes(norm(k.text)));
-    const seen = new Set<string>();
-    proposedFacts = facts.filter((f) => !seen.has(f.text.toLowerCase()) && seen.add(f.text.toLowerCase()) && !known.some((k) => norm(k.text) === norm(f.text)))
-      .map((f) => ({ text: f.text, category: f.category, validFrom: f.validFrom, replaces: [...new Map(f.replaces.map(find).filter((k): k is { id: string; text: string } => !!k).map((k) => [k.id, k])).values()] }));
+    proposedFacts = refineFacts(facts.map((f) => ({ ...f, replaces: f.replaces.map(find).filter((k): k is { id: string; text: string } => !!k).map((k) => k.id) })), known, 4);
   }
 
   const done = /\[\[\s*FINE\s*\]\]/i.test(final);
   return { text, note, sources, read: read.size, followUps, actions, names, facts: proposedFacts, steps, model, tier: usedTier, cost, done };
 }
 
-type ToolState = { scope: { within?: Set<string> }; read: Set<string>; titles: Map<string, string>; proposed: unknown[]; facts: { text: string; replaces: string[]; category: FactCategory | null; validFrom: string | null }[] };
+type ToolState = { scope: { within?: Set<string> }; read: Set<string>; titles: Map<string, string>; proposed: unknown[]; facts: { text: string; replaces: string[]; category: FactCategory | null; validFrom: string | null; permanent: boolean }[] };
 
 async function runTool(name: string, args: Record<string, unknown>, st: ToolState): Promise<unknown> {
   if (name === "search_memory") {
@@ -381,7 +381,7 @@ async function runTool(name: string, args: Record<string, unknown>, st: ToolStat
     const replaces = Array.isArray(args.replaces) ? args.replaces.map((x) => String(x).trim()).filter(Boolean).slice(0, 4) : [];
     const category = (FACT_CATEGORIES as readonly string[]).includes(String(args.category)) ? (args.category as FactCategory) : null;
     const vf = String(args.valid_from ?? "");
-    if (f) st.facts.push({ text: f, replaces, category, validFrom: /^\d{4}-\d{2}-\d{2}$/.test(vf) ? vf : null });
+    if (f) st.facts.push({ text: f, replaces, category, validFrom: /^\d{4}-\d{2}-\d{2}$/.test(vf) ? vf : null, permanent: args.permanent === true });
     return { ok: true, message: "Proposto all'utente, che deciderà se ricordarlo." };
   }
   const tool = TOOL_BY_NAME.get(name);

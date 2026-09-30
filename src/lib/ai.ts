@@ -4,6 +4,7 @@ import { eq, ne } from "drizzle-orm";
 import type { ProposedFact } from "./chat";
 import { db } from "./db";
 import { FACT_CATEGORIES, facts, ITEM_TYPES, people, projects, type FactCategory, type Proposal } from "./db/schema";
+import { freshFacts, parseBirth } from "./fact-rules";
 import { callJSON, callLLM } from "./llm";
 import { getAiConfig, type AiTier } from "./settings";
 
@@ -47,7 +48,7 @@ const ProposalSchema = z.object({
     .array(z.object({ id: z.string(), conflict: z.boolean(), reason: z.string() }))
     .describe("Elementi esistenti collegati (max 4). conflict=true se il contenuto li contraddice"),
   tasks: z.array(z.string()).describe("Attività concrete che emergono dal contenuto, anche nessuna"),
-  facts: z.array(z.string()).describe("Fatti stabili che l'utente dice su di sé (abitudini, orari e giorni in cui fa le cose, preferenze, lavoro, persone della sua vita), in terza persona e brevi, es. «Fa i lavori di casa il sabato». Mai quelli già in <fatti_noti> né cose passeggere. Vuoto se non ce ne sono."),
+  facts: z.array(z.string()).describe("Fatti stabili che l'utente dice su di sé (abitudini, orari e giorni in cui fa le cose, preferenze, lavoro, persone della sua vita, dati personali come la data di nascita), in terza persona e brevi, es. «Fa i lavori di casa il sabato». Mai quelli già in <fatti_noti>, nemmeno detti con altre parole o in un altro formato, né cose passeggere. Vuoto se non ce ne sono."),
 });
 
 const SYSTEM = `Sei il motore di classificazione di un "Second Brain" personale, in italiano.
@@ -65,7 +66,7 @@ export async function classify(content: string, ctx: MemoryContext): Promise<Pro
     SYSTEM,
     `<memoria>\n${JSON.stringify(ctx)}\n</memoria>${known.length ? `\n\n<fatti_noti>\n${known.map((f) => f.text).join("\n")}\n</fatti_noti>` : ""}\n\n<contenuto_catturato>\n${content}\n</contenuto_catturato>`,
   );
-  const knownLower = new Set(known.map((f) => f.text.toLowerCase()));
+  const fresh = freshFacts(known);
 
   const projectIds = new Set(ctx.projects.map((p) => p.id));
   const itemIds = new Set(ctx.items.map((i) => i.id));
@@ -74,7 +75,7 @@ export async function classify(content: string, ctx: MemoryContext): Promise<Pro
     projectId: out.projectId && projectIds.has(out.projectId) ? out.projectId : null,
     links: out.links.filter((l) => itemIds.has(l.id)).slice(0, 4),
     tags: out.tags.map((t) => t.replace(/^#/, "").toLowerCase()).slice(0, 6),
-    facts: [...new Set(out.facts.map((f) => f.replace(/\s+/g, " ").trim().slice(0, 300)))].filter((f) => f.length > 3 && !knownLower.has(f.toLowerCase())).slice(0, 3),
+    facts: out.facts.map((f) => f.replace(/\s+/g, " ").trim().slice(0, 300)).filter((f) => f.length > 3 && fresh(f)).slice(0, 3),
   };
 }
 
@@ -234,16 +235,32 @@ export async function categorizeFacts(list: { id: string; text: string }[]): Pro
   return out.facts.filter((f) => ids.has(f.id));
 }
 
+/** Come trattare i fatti su di te rispetto a quelli già noti (via veloce, Assistente, diario). */
+export const FACT_RULES = `Fatti su di te:
+- Se un fatto già noto dice la stessa cosa, anche con parole, persona o formato diversi («Sono nato il 29/12/1986» = «È nato il 29 dicembre 1986»), non proporlo di nuovo.
+- replaces solo se il nuovo fatto cambia la situazione (un lavoro nuovo al posto del vecchio) o corregge un dato sbagliato (una data diversa); mai quando dice la stessa cosa.
+- permanent true per ciò che è vero da sempre e non cambia (data e luogo di nascita, genitori, nome): allora validFrom è null. La data di nascita non è la data da cui il fatto vale.`;
+
 const QuickSchema = z.object({
   question: z.boolean().describe("true se la richiesta è (anche) una domanda o chiede di cercare, riassumere, spiegare o ragionare sulla memoria; false se è solo un comando o un'informazione da archiviare"),
-  actions: z.array(CommandActionSchema).describe("Azioni da proporre, nell'ordine; vuoto se è solo una domanda"),
+  actions: z.array(CommandActionSchema).describe("Azioni da proporre, nell'ordine; vuoto se è solo una domanda o se la richiesta è solo un'informazione su di sé (quella va in facts, non in capture)"),
   facts: z.array(z.object({
     text: z.string().describe("Il fatto, in terza persona e breve"),
-    replaces: z.array(z.string()).describe("id dei fatti già noti che questo rende non più veri (es. un nuovo lavoro sostituisce il vecchio); vuoto se nessuno"),
+    replaces: z.array(z.string()).describe("id dei fatti già noti che questo cambia o corregge (es. un nuovo lavoro sostituisce il vecchio); vuoto se nessuno o se dicono la stessa cosa"),
     category: z.enum(FACT_CATEGORIES).describe(FACT_CATEGORY_HELP),
-    validFrom: z.string().nullable().describe("Da quando vale, YYYY-MM-DD, se l'utente lo dice (anche nel futuro: «dal 19 ottobre» → 2026-10-19; «da lunedì»); null se non lo dice"),
-  })).describe("Fatti stabili che l'utente racconta su di sé e che conviene ricordare (lavoro, ruolo, persone della sua vita e che cosa sono per lui, preferenze, abitudini), es. «Dal 19 ottobre 2026 lavora in Easytech», «Diego Bernardi è un ex collega di ComputerRivo e futuro collega in Easytech». Mai quelli già noti né cose passeggere. Vuoto se non ce ne sono."),
+    validFrom: z.string().nullable().describe("Da quando vale, YYYY-MM-DD, se l'utente lo dice (anche nel futuro: «dal 19 ottobre» → 2026-10-19; «da lunedì»); null se non lo dice o se permanent"),
+    permanent: z.boolean().describe("true se è vero da sempre e non cambierà (data e luogo di nascita, genitori)"),
+  })).describe("Fatti stabili che l'utente racconta su di sé e che conviene ricordare (lavoro, ruolo, persone della sua vita e che cosa sono per lui, preferenze, abitudini, dati personali come il compleanno), es. «Dal 19 ottobre 2026 lavora in Easytech», «Diego Bernardi è un ex collega di ComputerRivo e futuro collega in Easytech», «È nato il 29 dicembre 1986». Mai quelli già noti né cose passeggere. Vuoto se non ce ne sono."),
 });
+
+/**
+ * Una frase che dice solo qualcosa su di sé («il 29 dicembre è il mio compleanno») diventa un fatto: la cattura
+ * in più sarebbe un doppione in memoria. Se il modello la propone lo stesso, resta come alternativa non spuntata.
+ */
+function captureOnlyAsFallback(actions: CommandAction[], facts: ProposedFact[]): CommandAction[] {
+  if (!facts.length || !actions.length || actions.some((a) => a.kind !== "capture")) return actions;
+  return actions.map((a) => ({ ...a, on: false }));
+}
 
 /**
  * Smistamento veloce (modello "fast", una sola chiamata, contesto già incluso): i comandi diventano subito azioni
@@ -255,7 +272,7 @@ export async function quickCommand(text: string, ctx: CommandContext, turns: Cha
   const out = await callJSON<z.infer<typeof QuickSchema>>({
     tier: "fast", task: "comando", name: "comando", maxTokens: 2000, temperature: 0, persona: false, timeoutMs: 30_000,
     messages: [
-      { role: "system", content: COMMAND_SYSTEM + "\nSe la richiesta è una domanda (anche insieme a un comando) metti question true: risponderà l'Assistente, che può proporre lui le azioni." },
+      { role: "system", content: COMMAND_SYSTEM + "\nSe la richiesta è una domanda (anche insieme a un comando) metti question true: risponderà l'Assistente, che può proporre lui le azioni.\nSe la richiesta dice solo qualcosa di stabile sull'utente (dati personali, lavoro, abitudini, preferenze), proponi il fatto in facts e nessuna capture: i fatti su di lui non vanno anche tra le note.\n" + FACT_RULES },
       { role: "user", content: `<contesto>
 ${JSON.stringify(ctx)}
 </contesto>${known.length ? `\n\n<fatti_gia_noti_sull_utente>\n${known.map((f) => `${f.id}: ${f.text}`).join("\n")}\n</fatti_gia_noti_sull_utente>` : ""}${prev ? `
@@ -271,18 +288,33 @@ ${text}
     jsonSchema: z.toJSONSchema(QuickSchema),
     parse: (v) => QuickSchema.safeParse(v) as { success: true; data: z.infer<typeof QuickSchema> } | { success: false },
   });
-  const lower = new Set(known.map((k) => k.text.toLowerCase()));
+  const newFacts = refineFacts(out.facts, known, 4);
+  return { question: out.question, actions: out.question ? [] : captureOnlyAsFallback(cleanActions(out.actions, ctx), newFacts), facts: newFacts };
+}
+
+/**
+ * Pulisce i fatti proposti dall'IA: via quelli già noti (anche detti con altre parole) e i doppioni,
+ * `replaces` solo verso id esistenti, niente «valido dal» per i fatti permanenti.
+ */
+export function refineFacts(
+  list: { text: string; replaces: string[]; category?: FactCategory | null; validFrom: string | null; permanent?: boolean }[],
+  known: { id: string; text: string }[], max: number,
+): ProposedFact[] {
+  const fresh = freshFacts(known);
   const byId = new Map(known.map((k) => [k.id, k.text]));
-  const seen = new Set<string>();
-  const newFacts: ProposedFact[] = [];
-  for (const f of out.facts) {
+  const out: ProposedFact[] = [];
+  for (const f of list) {
     const text = f.text.replace(/\s+/g, " ").trim().slice(0, 300);
-    if (text.length <= 3 || lower.has(text.toLowerCase()) || seen.has(text.toLowerCase())) continue;
-    seen.add(text.toLowerCase());
-    newFacts.push({ text, category: f.category, validFrom: /^\d{4}-\d{2}-\d{2}$/.test(f.validFrom ?? "") ? f.validFrom : null, replaces: [...new Set(f.replaces)].filter((id) => byId.has(id)).map((id) => ({ id, text: byId.get(id)! })) });
-    if (newFacts.length >= 4) break;
+    if (text.length <= 3 || !fresh(text)) continue;
+    const permanent = !!f.permanent || !!parseBirth(text);
+    out.push({
+      text, category: f.category ?? null, permanent,
+      validFrom: !permanent && /^\d{4}-\d{2}-\d{2}$/.test(f.validFrom ?? "") ? f.validFrom : null,
+      replaces: [...new Set(f.replaces)].filter((id) => byId.has(id)).map((id) => ({ id, text: byId.get(id)! })),
+    });
+    if (out.length >= max) break;
   }
-  return { question: out.question, actions: out.question ? [] : cleanActions(out.actions, ctx), facts: newFacts };
+  return out;
 }
 
 /** Nomi leggibili degli id del contesto, per le schede delle azioni. */

@@ -210,7 +210,7 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
             return { answer: { ...a, text: a.text + e.text } };
           });
           else if (e.type === "answer") patchAt(at, { answer: e.answer });
-          else if (e.type === "command") patchAt(at, { cards: e.actions.map((a) => ({ ...a, on: true })), names: e.names });
+          else if (e.type === "command") patchAt(at, { cards: e.actions.map((a) => ({ ...a, on: a.on !== false })), names: e.names });
           else if (e.type === "tool") patchAt(at, (m) => ({ tools: [...(m.tools ?? []), e.label], step: 1 }));
           else if (e.type === "reset") patchAt(at, (m) => ({ answer: m.answer && "text" in m.answer ? { ...m.answer, text: "" } : m.answer }));
           else if (e.type === "facts") patchAt(at, { facts: e.facts.map((f): FactCard => ({ ...f, state: "review" })) });
@@ -328,7 +328,7 @@ export function AssistantView({ scopes, initialScope, initialQuestion, initialCh
                           {f.state === "review" && (
                             <>
                               <button className="btn btn-ghost" onClick={() => patchAt(i, (r) => ({ facts: r.facts!.map((x, h) => (h === k ? { ...x, state: "discarded" } : x)) }))}>No</button>
-                              <button className="btn btn-primary" onClick={() => { addFact(f.text, "chat", { sourceRef: chatRef.current, replaces: (f.replaces ?? []).map((r) => r.id), category: f.category, validFrom: f.validFrom }); patchAt(i, (r) => ({ facts: r.facts!.map((x, h) => (h === k ? { ...x, state: "saved" } : x)) })); }}>Ricorda</button>
+                              <button className="btn btn-primary" onClick={() => { addFact(f.text, "chat", { sourceRef: chatRef.current, replaces: (f.replaces ?? []).map((r) => r.id), category: f.category, validFrom: f.validFrom, permanent: f.permanent }); patchAt(i, (r) => ({ facts: r.facts!.map((x, h) => (h === k ? { ...x, state: "saved" } : x)) })); }}>Ricorda</button>
                             </>
                           )}
                         </div>

@@ -21,7 +21,11 @@ export type ChatAnswer = {
 
 /** Fatto sull'utente proposto dall'IA, da confermare. */
 /** Fatto proposto dall'IA: se contraddice fatti già noti, `replaces` li indica (confermando diventano storia). */
-export type ProposedFact = { text: string; replaces: { id: string; text: string }[]; category?: FactCategory | null; validFrom?: string | null };
+export type ProposedFact = {
+  text: string; replaces: { id: string; text: string }[]; category?: FactCategory | null; validFrom?: string | null;
+  /** Vero da sempre (data e luogo di nascita…): niente «valido dal», e ciò che sostituisce era una svista, non un cambiamento. */
+  permanent?: boolean;
+};
 export type FactCard = ProposedFact & { state: "review" | "saved" | "discarded" };
 /** Formato delle risposte salvate prima dello streaming (27/9). */
 export type LegacyAnswer = { paragraphs: string[]; list: string[]; after: string; note: string; sources: Source[]; read: number };

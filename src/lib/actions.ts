@@ -26,6 +26,7 @@ import { removeFiles } from "./files";
 import { deleteAimRows, executeActions } from "./commands";
 import { buildOverview, forgetOverview, type Overview } from "./overview";
 import { closeFactQuestion, todayFactQuestion } from "./fact-question";
+import { factKey, parseBirth } from "./fact-rules";
 import { detectHabits } from "./habits";
 import { listBackups, runBackup, type BackupStatus } from "./backup";
 import { DEFAULT_CHECKIN, saveCheckinPrefsRaw, type CheckinPrefs } from "./checkin";
@@ -656,26 +657,36 @@ const dayBefore = (day: string) => isoDay(new Date(Date.parse(day + "T12:00:00Z"
  * `validFrom`: da quando vale, se l'utente l'ha detto («dal 19 ottobre»), anche nel futuro. Un fatto futuro è confermato
  * ma «in arrivo»: i fatti che sostituisce restano validi fino al giorno prima (poi `expireFacts()` li chiude).
  */
-export async function addFact(text: string, source = "manuale", opts: { sourceRef?: string | null; replaces?: string[]; origin?: FactOrigin; category?: FactCategory | null; validFrom?: string | null } = {}) {
+export async function addFact(text: string, source = "manuale", opts: { sourceRef?: string | null; replaces?: string[]; origin?: FactOrigin; category?: FactCategory | null; validFrom?: string | null; permanent?: boolean } = {}) {
   await guard();
   const t = text.replace(/\s+/g, " ").trim().slice(0, 300);
   if (!t) return;
   const today = isoDay();
+  const permanent = !!opts.permanent || !!parseBirth(t);
   const from = opts.validFrom && /^\d{4}-\d{2}-\d{2}$/.test(opts.validFrom) ? opts.validFrom : today;
   const active = await db.select({ id: facts.id, text: facts.text }).from(facts).where(eq(facts.status, "confirmed"));
-  const same = active.find((f) => f.text.toLowerCase() === t.toLowerCase());
+  // Stesso fatto già noto, anche con altre parole («29/12/1986» = «29 dicembre 1986»): solo una nuova conferma.
+  const key = factKey(t);
+  const same = active.find((f) => factKey(f.text) === key);
   const now = new Date();
   let id = same?.id;
   if (same) await db.update(facts).set({ lastConfirmedAt: now }).where(eq(facts.id, same.id));
   else {
     id = newId("fa");
     const category = opts.category && (FACT_CATEGORIES as readonly string[]).includes(opts.category) ? opts.category : null;
-    await db.insert(facts).values({ id, text: t, source, createdAt: now, origin: opts.origin ?? "declared", status: "confirmed", sourceRef: opts.sourceRef ?? null, validFrom: from, lastConfirmedAt: now, category });
+    // Un fatto vero da sempre non ha un «valido dal».
+    await db.insert(facts).values({ id, text: t, source, createdAt: now, origin: opts.origin ?? "declared", status: "confirmed", sourceRef: opts.sourceRef ?? null, validFrom: permanent ? null : from, lastConfirmedAt: now, category });
   }
   const old = (opts.replaces ?? []).filter((r) => r !== id && active.some((f) => f.id === r));
   // Sostituiti: validi fino al giorno prima dell'inizio del nuovo; se l'inizio è futuro restano attuali fino ad allora.
-  if (old.length) await db.update(facts).set({ status: from > today ? "confirmed" : "obsolete", validUntil: dayBefore(from), supersededBy: id }).where(inArray(facts.id, old));
-  await log(old.length ? "Fatto aggiornato" : "Fatto ricordato", null, old.length ? `${t} (sostituisce: ${active.filter((f) => old.includes(f.id)).map((f) => f.text).join("; ")})` : t);
+  // Per un fatto permanente il vecchio era una svista: superato, ma senza un periodo in cui «valeva».
+  if (old.length) {
+    await db.update(facts).set(permanent
+      ? { status: "obsolete", validUntil: null, supersededBy: id }
+      : { status: from > today ? "confirmed" : "obsolete", validUntil: dayBefore(from), supersededBy: id }).where(inArray(facts.id, old));
+  }
+  if (same && !old.length) { refreshAll(); return; }
+  await log(old.length ? (permanent ? "Fatto corretto" : "Fatto aggiornato") : "Fatto ricordato", null, old.length ? `${t} (sostituisce: ${active.filter((f) => old.includes(f.id)).map((f) => f.text).join("; ")})` : t);
   refreshAll();
 }
 

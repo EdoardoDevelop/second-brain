@@ -12,6 +12,7 @@ import { commandContext } from "./queries";
 import { detectHabits, sameSeries, upcomingDeadlines } from "./habits";
 import { lastNightDiary } from "./checkin";
 import { getSetting, setSetting } from "./settings";
+import { upcomingBirthdays, whenLabel, type Birthday } from "./birthdays";
 
 /**
  * L'IA che prende l'iniziativa: riepilogo del mattino e suggerimenti.
@@ -200,6 +201,9 @@ async function currentFacts(): Promise<string[]> {
   return (await db.select({ text: facts.text, validFrom: facts.validFrom, validUntil: facts.validUntil }).from(facts).where(eq(facts.status, "confirmed")))
     .filter((f) => (!f.validFrom || f.validFrom <= day) && (!f.validUntil || f.validUntil >= day)).map((f) => f.text).slice(0, 60);
 }
+/** Compleanni per i prompt: quello dell'utente solo oggi, gli altri anche nei prossimi giorni (per un regalo o un messaggio). */
+const birthdayRows = (bs: Birthday[]) => bs.map((b) => ({ chi: b.user ? "l'utente" : b.who, quando: whenLabel(b.daysTo), ...(b.age ? { compie: b.age } : {}) }));
+const birthdaysBlock = (bs: Birthday[]) => bs.length ? `\n<compleanni>\n${JSON.stringify(birthdayRows(bs))}\n</compleanni>` : "";
 const factsBlock = (fs: string[]) => fs.length ? `\n<cosa_so_dell_utente>\n${fs.map((t) => "- " + t).join("\n")}\n</cosa_so_dell_utente>` : "";
 
 /** Riepilogo del mattino scritto dall'IA (salvato in settings.daily_brief e mostrato nella Home). */
@@ -211,13 +215,14 @@ export async function morningBrief(): Promise<DailyBrief> {
     .map((h) => ({ cosa: h.label, quando: h.daysToNext === 0 ? "oggi" : "domani", ritmo: h.cadenceLabel }));
   const empty = isEmpty(changes);
   const current = await currentFacts();
+  const bdays = (await upcomingBirthdays(7).catch(() => [])).filter((b) => !b.user || b.daysTo === 0);
   // Solo i campi con qualcosa, per non far inventare novità all'IA.
   const delta = Object.fromEntries(Object.entries(changes).filter(([k, v]) => k !== "since" && Array.isArray(v) && v.length));
   const out = await callJSON<z.infer<typeof BriefSchema>>({
     tier: "smart", task: "riepilogo_mattino", name: "riepilogo_mattino", maxTokens: 1200,
     messages: [
-      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights. Le abitudini in arrivo (cose che l'utente fa di solito oggi o domani) vanno ricordate in highlights. Gli obiettivi aperti senza data (openGoals) non sono cose da fare oggi: citali solo se oggi è il giorno giusto per quel lavoro. Prima di scrivere, leggi <cosa_so_dell_utente> e il giorno della settimana: se l'utente fa certe cose in un altro giorno (es. i lavori di casa il sabato), non metterle né nel titolo né in highlights né nel body; al più un accenno («sabato: casa») se il giorno è vicino. Se c'è il racconto di ieri sera, puoi riprenderlo con naturalezza (es. «ieri mi hai detto che…») quando è utile per oggi." },
-      { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>${factsBlock(current)}${habitsSoon.length ? `\n<abitudini_in_arrivo>\n${JSON.stringify(habitsSoon)}\n</abitudini_in_arrivo>` : ""}${diary ? `\n<ieri_sera_mi_ha_raccontato>\n${diary}\n</ieri_sera_mi_ha_raccontato>` : ""}\n<cambiato>\n${empty ? "Nulla di nuovo." : JSON.stringify(delta)}\n</cambiato>` },
+      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights. Le abitudini in arrivo (cose che l'utente fa di solito oggi o domani) vanno ricordate in highlights. Gli obiettivi aperti senza data (openGoals) non sono cose da fare oggi: citali solo se oggi è il giorno giusto per quel lavoro. Prima di scrivere, leggi <cosa_so_dell_utente> e il giorno della settimana: se l'utente fa certe cose in un altro giorno (es. i lavori di casa il sabato), non metterle né nel titolo né in highlights né nel body; al più un accenno («sabato: casa») se il giorno è vicino. Se c'è il racconto di ieri sera, puoi riprenderlo con naturalezza (es. «ieri mi hai detto che…») quando è utile per oggi. Se in <compleanni> oggi è il compleanno dell'utente, il titolo sono gli auguri (con gli anni che compie, se noti) e il body resta caloroso e leggero. I compleanni di altre persone di oggi o dei prossimi giorni vanno in highlights (es. «Sabato compie gli anni Clelia: un pensiero?»)." },
+      { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>${factsBlock(current)}${birthdaysBlock(bdays)}${habitsSoon.length ? `\n<abitudini_in_arrivo>\n${JSON.stringify(habitsSoon)}\n</abitudini_in_arrivo>` : ""}${diary ? `\n<ieri_sera_mi_ha_raccontato>\n${diary}\n</ieri_sera_mi_ha_raccontato>` : ""}\n<cambiato>\n${empty ? "Nulla di nuovo." : JSON.stringify(delta)}\n</cambiato>` },
     ],
     jsonSchema: z.toJSONSchema(BriefSchema),
     parse: (v) => BriefSchema.safeParse(v) as { success: true; data: z.infer<typeof BriefSchema> } | { success: false },
@@ -313,7 +318,9 @@ async function signals() {
     .map((d) => ({ ...d, seenKey: `d:${d.key}:${d.until}` }));
 
   const weekdayName = new Intl.DateTimeFormat("it-IT", { timeZone: "Europe/Rome", weekday: "long" }).format(new Date());
-  return { today, weekday: weekdayName, clusters, quiet, stale, overdue, conflicts, week, personalGoals, unlinked, habits, deadlines, projects: ps.filter((p) => p.status !== "Chiuso").map((p) => ({ id: p.id, name: p.name })) };
+  // Compleanni di altre persone nei prossimi giorni: occasione per un messaggio o un regalo.
+  const birthdays = birthdayRows((await upcomingBirthdays(7).catch(() => [])).filter((b) => !b.user));
+  return { today, weekday: weekdayName, birthdays, clusters, quiet, stale, overdue, conflicts, week, personalGoals, unlinked, habits, deadlines, projects: ps.filter((p) => p.status !== "Chiuso").map((p) => ({ id: p.id, name: p.name })) };
 }
 
 const InsightSchema = z.object({
@@ -413,7 +420,7 @@ function evidence(s: Awaited<ReturnType<typeof signals>>, kind: string, ids: Set
 export async function generateInsights(): Promise<number> {
   const s = await signals();
   const goalSignals = s.personalGoals.some((g) => g.dueSoon || g.idle || g.noNextStep) || s.unlinked.length > 0;
-  const empty = !s.clusters.length && !s.quiet.length && !s.stale.length && !s.overdue.length && !s.conflicts.length && !s.week && !goalSignals && !s.habits.length && !s.deadlines.length;
+  const empty = !s.clusters.length && !s.quiet.length && !s.stale.length && !s.overdue.length && !s.conflicts.length && !s.week && !goalSignals && !s.habits.length && !s.deadlines.length && !s.birthdays.length;
   // Le proposte della cura notturna della memoria («cleanup») restano finché non si decidono.
   const dismissOld = () => db.update(insights).set({ status: "dismissed" }).where(and(eq(insights.status, "new"), ne(insights.kind, "cleanup")));
   if (empty) { await dismissOld(); await log("Suggerimenti", null, "Nessun segnale"); return 0; }
@@ -427,6 +434,7 @@ export async function generateInsights(): Promise<number> {
 Tipi: project (note senza progetto con un tema comune: proponi create_project, poi update_item per assegnarle), follow_up (persona non sentita da tempo con cose in sospeso: proponi add_task "Sentire …"), stale (progetto fermo: proponi il prossimo passo come add_task), overdue (attività scadute da giorni: proponi set_task_due o complete_task), conflict (informazioni in conflitto da chiarire), weekly (il lunedì, bilancio della settimana in 2-3 frasi, senza azioni), goal (obiettivo personale in scadenza, fermo o senza un prossimo passo: proponi add_task con goalId; oppure elementi di unlinked che servono a un obiettivo: proponi update_item con goalId).
 habit (una cosa che l'utente fa con regolarità e che arriva oggi, domani o dopodomani, vedi habits: proponi add_task per prepararla con due il giorno prima o il giorno stesso, e nel body di' cosa preparare o ritrovare partendo dalle ultime volte in lastTimes, citandole in refs), plan (più attività in scadenza ravvicinata nello stesso progetto o obiettivo, vedi deadlines: proponi set_task_due per dare una data alle attività senza data prima della scadenza, distribuendole nei giorni e mettendo prima le più importanti, ed eventualmente add_task per un passo che manca; nel body il piano giorno per giorno in 2-4 righe).
 Oggi è ${s.weekday} ${s.today}. Rispetta ciò che i fatti in <cosa_so_dell_utente> dicono su quando l'utente fa le cose (giorni, orari, abitudini: es. «i lavori di casa li faccio il sabato»): non proporre per oggi cose che fa in un altro giorno; se serve, proponi set_task_due per il prossimo giorno giusto, altrimenti lasciale stare.
+Compleanni (birthdays) di persone oggi o nei prossimi giorni: se la persona conta per l'utente, un suggerimento breve (fargli gli auguri, pensare a un regalo se mancano alcuni giorni; add_task con la data giusta solo se utile).
 Gli obiettivi personali (personalGoals) sono ciò che conta di più per l'utente: se un suggerimento di qualsiasi tipo è rilevante per uno di essi, dillo nel body («Rilevante per il tuo obiettivo …») e metti il suo id in refs.
 Scegli solo ciò che è davvero utile; meglio pochi suggerimenti buoni. Usa solo gli id presenti nei segnali. Le azioni verranno confermate dall'utente: compila solo i campi che servono, gli altri null.`,
       },
