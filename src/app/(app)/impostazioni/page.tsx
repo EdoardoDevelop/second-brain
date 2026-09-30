@@ -18,6 +18,7 @@ import { DeleteAll, DensitySwitch, ImportBackup, LookEditor, ThemeSwitch } from 
 import { AiSettings } from "./AiSettings";
 import { BackupCard } from "./BackupCard";
 import { backupStatus, listBackups } from "@/lib/backup";
+import { publicOrigin } from "@/lib/origin";
 
 export default async function SettingsPage() {
   await ready();
@@ -45,9 +46,7 @@ export default async function SettingsPage() {
     getCheckinPrefs(),
     getVoicePrefs(),
   ]);
-  // Indirizzo pubblico dell'app (dietro nginx arriva negli header inoltrati).
-  const h = await headers();
-  const base = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("x-forwarded-host") ?? h.get("host") ?? "localhost"}`;
+  const base = publicOrigin(await headers());
 
   const stats: [string, number][] = [["Elementi in memoria", nItems], ["Progetti", nProjects], ["Persone", nPeople], ["Attività", nTasks]];
 

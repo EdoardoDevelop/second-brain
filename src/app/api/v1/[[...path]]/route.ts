@@ -1,5 +1,6 @@
 import { ApiError, runTool, TOOL_BY_NAME } from "@/lib/api-core";
 import { authApi } from "@/lib/api-keys";
+import { publicOrigin } from "@/lib/origin";
 
 export const maxDuration = 180;
 
@@ -30,7 +31,7 @@ async function handle(req: Request, params: Promise<{ path?: string[] }>) {
     return Response.json({
       name: "Second Brain API", version: 1,
       auth: "Header Authorization: Bearer <chiave> (dalle Impostazioni). Le chiavi in sola lettura non possono usare POST/PATCH.",
-      mcp: new URL("/api/mcp", req.url).toString(),
+      mcp: `${publicOrigin(req.headers)}/api/mcp`,
       endpoints: ROUTES.map((r) => r.doc),
     });
   }
