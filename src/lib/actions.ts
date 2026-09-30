@@ -29,7 +29,7 @@ import { closeFactQuestion, todayFactQuestion } from "./fact-question";
 import { factKey, parseBirth } from "./fact-rules";
 import { detectHabits } from "./habits";
 import { listBackups, runBackup, type BackupStatus } from "./backup";
-import { DEFAULT_CHECKIN, saveCheckinPrefsRaw, type CheckinPrefs } from "./checkin";
+import { cleanCheckinPrefs, saveCheckinPrefsRaw, type CheckinPrefs } from "./checkin";
 import { deliver, emit, WEBHOOK_EVENTS } from "./webhooks";
 import { createApiKey } from "./api-keys";
 import { randomBytes } from "node:crypto";
@@ -288,14 +288,7 @@ export async function deleteTask(id: string) {
 
 export async function saveCheckinPrefs(p: CheckinPrefs) {
   await guard();
-  const hh = /^([01]\d|2[0-3]):[0-5]\d$/;
-  const clean: CheckinPrefs = {
-    enabled: !!p.enabled,
-    from: hh.test(p.from) ? p.from : DEFAULT_CHECKIN.from,
-    to: hh.test(p.to) && p.to > p.from ? p.to : DEFAULT_CHECKIN.to,
-    weekend: ["always", "events", "never"].includes(p.weekend) ? p.weekend : "events",
-    generic: Math.max(0, Math.min(5, Math.round(Number(p.generic) || 0))),
-  };
+  const clean = cleanCheckinPrefs({ ...p, enabled: !!p.enabled });
   await saveCheckinPrefsRaw(clean);
   refreshAll();
   return clean;

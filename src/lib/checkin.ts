@@ -23,31 +23,46 @@ export type CheckinPrefs = {
   enabled: boolean;
   /** Fascia oraria (HH:MM, ora italiana). */
   from: string; to: string;
-  /** Nel weekend: sempre, solo con un evento vero, mai. */
-  weekend: "always" | "events" | "never";
-  /** Check-in generici («Giornata tranquilla?») a settimana nei giorni senza eventi. */
+  /**
+   * Quanto spesso: daily = ogni sera (nei giorni scelti) · auto = quando succede qualcosa, più `generic` sere
+   * «tranquille» a settimana · events = solo quando succede qualcosa.
+   */
+  mode: "daily" | "auto" | "events";
+  /** Giorni in cui può scrivere (0 = lunedì … 6 = domenica). */
+  days: number[];
+  /** Solo in modalità auto: check-in generici («Giornata tranquilla?») a settimana nei giorni senza eventi. */
   generic: number;
 };
-export const DEFAULT_CHECKIN: CheckinPrefs = { enabled: true, from: "18:30", to: "20:00", weekend: "events", generic: 2 };
+export const DEFAULT_CHECKIN: CheckinPrefs = { enabled: true, from: "18:30", to: "20:00", mode: "auto", days: [0, 1, 2, 3, 4, 5, 6], generic: 2 };
+export const CHECKIN_MODES = ["daily", "auto", "events"] as const;
 const EVENT_THRESHOLD = 5;
 const DAY = 86400000;
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+/** Preferenze valide da un valore qualsiasi (anche quelle vecchie con `weekend`: «mai» = niente sabato e domenica). */
+export function cleanCheckinPrefs(raw: unknown): CheckinPrefs {
+  const p = { ...DEFAULT_CHECKIN, ...(raw && typeof raw === "object" ? raw : {}) } as CheckinPrefs & { weekend?: string };
+  const given = (raw as { days?: unknown } | null)?.days;
+  const days = Array.isArray(given)
+    ? [...new Set(given.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort()
+    : p.weekend === "never" ? [0, 1, 2, 3, 4] : DEFAULT_CHECKIN.days;
+  return {
+    enabled: p.enabled !== false,
+    from: HHMM.test(p.from) ? p.from : DEFAULT_CHECKIN.from,
+    to: HHMM.test(p.to) && p.to > p.from ? p.to : DEFAULT_CHECKIN.to,
+    mode: (CHECKIN_MODES as readonly string[]).includes(p.mode) ? p.mode : "auto",
+    days: days.length ? days : DEFAULT_CHECKIN.days,
+    generic: Math.max(0, Math.min(7, Math.round(Number(p.generic) || 0))),
+  };
+}
+
 export async function getCheckinPrefs(): Promise<CheckinPrefs> {
-  try {
-    const p = { ...DEFAULT_CHECKIN, ...JSON.parse((await getSetting("checkin_prefs")) ?? "{}") } as CheckinPrefs;
-    return {
-      enabled: p.enabled !== false,
-      from: HHMM.test(p.from) ? p.from : DEFAULT_CHECKIN.from,
-      to: HHMM.test(p.to) && p.to > p.from ? p.to : DEFAULT_CHECKIN.to,
-      weekend: ["always", "events", "never"].includes(p.weekend) ? p.weekend : "events",
-      generic: Math.max(0, Math.min(5, Math.round(Number(p.generic) || 0))),
-    };
-  } catch { return DEFAULT_CHECKIN; }
+  try { return cleanCheckinPrefs(JSON.parse((await getSetting("checkin_prefs")) ?? "{}")); } catch { return DEFAULT_CHECKIN; }
 }
 
 const romeTime = () => new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Rome", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date());
-const romeWeekday = () => new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Rome", weekday: "short" }).format(new Date());
+/** Giorno della settimana in Italia, 0 = lunedì … 6 = domenica. */
+const romeWeekday = () => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Rome", weekday: "short" }).format(new Date()));
 const toMin = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
 const fromMin = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 
@@ -86,7 +101,8 @@ export async function dayEvents(): Promise<CheckinEvent[]> {
     if (a.doneAt && isoDay(a.doneAt) === today) ev.push({ kind: "aim_done", score: 8, text: `Oggi hai raggiunto l'obiettivo «${a.title}»` });
   }
   for (const i of todays.filter((x) => x.type === "Riunione" || x.type === "Decisione" || SPECIAL.test(x.title)).slice(0, 3)) {
-    ev.push({ kind: "item_today", score: SPECIAL.test(i.title) ? 6 : 3, text: `${i.type ?? "Nota"} di oggi: «${i.title}»${peopleOf(i.id).length ? ` (con ${peopleOf(i.id).join(", ")})` : ""}` });
+    // Una riunione o una decisione di oggi basta per chiedere com'è andata.
+    ev.push({ kind: "item_today", score: SPECIAL.test(i.title) ? 6 : 5, text: `${i.type ?? "Nota"} di oggi: «${i.title}»${peopleOf(i.id).length ? ` (con ${peopleOf(i.id).join(", ")})` : ""}` });
   }
   // Persone comparse oggi per la prima volta nella memoria.
   const firstSeen = new Map<string, boolean>();
@@ -129,15 +145,15 @@ export async function checkinTick() {
 
   const events = await dayEvents();
   const best = events[0]?.score ?? 0;
-  const weekend = ["Sat", "Sun"].includes(romeWeekday());
   const hasEvent = best >= EVENT_THRESHOLD;
-  // Generici: pochi a settimana, mai due giorni di fila, sospesi se gli ultimi 3 check-in sono stati ignorati.
+  // Generici (modalità auto): quanti a settimana ha scelto l'utente; non il giorno dopo un check-in ignorato,
+  // sospesi se gli ultimi 3 sono stati ignorati. «Ogni sera» scrive comunque: l'ha chiesto lui.
   const lastThree = recent.filter((c) => c.status !== "skipped").slice(0, 3);
   const ignoredStreak = lastThree.length === 3 && lastThree.every((c) => c.status === "ignored");
   const genericWeek = recent.filter((c) => c.generic && c.status !== "skipped" && c.day >= isoDay(new Date(Date.now() - 7 * DAY))).length;
-  const yesterdaySent = recent.some((c) => c.day === isoDay(new Date(Date.now() - DAY)) && c.status !== "skipped");
-  const allowGeneric = prefs.generic > 0 && genericWeek < prefs.generic && !yesterdaySent && !ignoredStreak && !weekend;
-  const go = (weekend && prefs.weekend === "never") ? false : hasEvent || allowGeneric;
+  const yesterdayIgnored = recent.some((c) => c.day === isoDay(new Date(Date.now() - DAY)) && c.status === "ignored");
+  const allowGeneric = prefs.mode === "daily" || (prefs.mode === "auto" && genericWeek < prefs.generic && !yesterdayIgnored && !ignoredStreak);
+  const go = prefs.days.includes(romeWeekday()) && (hasEvent || allowGeneric);
   if (!go) { await insert({ status: "skipped", events }); return; }
 
   try {

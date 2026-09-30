@@ -133,8 +133,35 @@ export function CheckinSettings({ prefs: initial }: { prefs: CheckinPrefs }) {
   };
   return (
     <div>
-      <SRow title="Scrivimi la sera" desc="Solo nei giorni in cui c'è qualcosa di cui parlare (un primo giorno, un colloquio, una riunione con qualcuno, un obiettivo in scadenza). Dalle risposte ti propongo cosa ricordare.">
+      <SRow title="Scrivimi la sera" desc="Ti chiedo com'è andata la giornata; dalle risposte ti propongo cosa ricordare.">
         <Toggle on={prefs.enabled} onChange={(enabled) => update({ enabled })} label="Scrivimi la sera" />
+      </SRow>
+      <SRow title="Quanto spesso" desc={MODE_HELP[prefs.mode]}>
+        <select className="input" value={prefs.mode} onChange={(e) => update({ mode: e.target.value as CheckinPrefs["mode"] })} disabled={!prefs.enabled} style={{ height: 36, width: "auto" }}>
+          <option value="daily">Ogni sera</option>
+          <option value="auto">Quando ha senso</option>
+          <option value="events">Solo quando succede qualcosa</option>
+        </select>
+      </SRow>
+      {prefs.mode === "auto" && (
+        <SRow title="Sere tranquille" desc="Nei giorni senza novità, una domanda leggera («Giornata tranquilla?»). Se non rispondi per tre volte di fila smetto finché non rispondi di nuovo.">
+          <select className="input" value={prefs.generic} onChange={(e) => update({ generic: Number(e.target.value) })} disabled={!prefs.enabled} style={{ height: 36, width: "auto" }}>
+            <option value={0}>Mai</option>
+            {[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n === 7 ? "Tutte" : `${n} ${n === 1 ? "volta" : "volte"} a settimana`}</option>)}
+          </select>
+        </SRow>
+      )}
+      <SRow title="In quali giorni" desc="Negli altri giorni non ti scrivo, qualunque cosa succeda.">
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }} role="group" aria-label="Giorni">
+          {DAY_NAMES.map((d, i) => {
+            const on = prefs.days.includes(i);
+            return (
+              <button key={d} type="button" className={on ? "btn btn-primary" : "btn btn-ghost"} aria-pressed={on} disabled={!prefs.enabled || (on && prefs.days.length === 1)}
+                onClick={() => update({ days: on ? prefs.days.filter((x) => x !== i) : [...prefs.days, i].sort() })}
+                style={{ height: 34, minWidth: 44, padding: "0 8px" }}>{d}</button>
+            );
+          })}
+        </div>
       </SRow>
       <SRow title="Fascia oraria" desc="Dentro la fascia scelgo l'ora a cui di solito rispondi.">
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -143,24 +170,16 @@ export function CheckinSettings({ prefs: initial }: { prefs: CheckinPrefs }) {
           <input type="time" className="input" value={prefs.to} onChange={(e) => e.target.value && update({ to: e.target.value })} disabled={!prefs.enabled} style={{ height: 36, width: 120 }} aria-label="Alle" />
         </div>
       </SRow>
-      <SRow title="Nel weekend" desc="Sabato e domenica.">
-        <select className="input" value={prefs.weekend} onChange={(e) => update({ weekend: e.target.value as CheckinPrefs["weekend"] })} disabled={!prefs.enabled} style={{ height: 36, width: "auto" }}>
-          <option value="events">Solo se c&apos;è un evento</option>
-          <option value="always">Sì</option>
-          <option value="never">Mai</option>
-        </select>
-      </SRow>
-      <SRow title="Nei giorni senza novità" desc="Una domanda leggera («Giornata tranquilla?»), mai due giorni di fila. Se non rispondi per tre volte smetto di farla.">
-        <select className="input" value={prefs.generic} onChange={(e) => update({ generic: Number(e.target.value) })} disabled={!prefs.enabled} style={{ height: 36, width: "auto" }}>
-          <option value={0}>Mai</option>
-          <option value={1}>1 volta a settimana</option>
-          <option value={2}>2 volte a settimana</option>
-          <option value={3}>3 volte a settimana</option>
-        </select>
-      </SRow>
     </div>
   );
 }
+
+const DAY_NAMES = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"];
+const MODE_HELP: Record<CheckinPrefs["mode"], string> = {
+  daily: "Tutte le sere, nei giorni scelti: quando è successo qualcosa parto da quello, altrimenti una domanda leggera.",
+  auto: "Quando c'è qualcosa di cui parlare (una riunione, una decisione, un primo giorno, un obiettivo in scadenza) e, se vuoi, qualche sera tranquilla a settimana.",
+  events: "Solo quando c'è qualcosa di cui parlare: una riunione o una decisione di oggi, un primo giorno, un colloquio, un obiettivo in scadenza.",
+};
 
 function SRow({ title, desc, children }: { title: string; desc: string; children: React.ReactNode }) {
   return (
