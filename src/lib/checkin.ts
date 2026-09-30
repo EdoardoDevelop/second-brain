@@ -5,6 +5,7 @@ import { db, newId } from "./db";
 import { aims, chats, checkins, facts, itemPeople, items, people, projects, tasks, type CheckinEvent } from "./db/schema";
 import type { ChatMsg, ProposedFact } from "./chat";
 import { FACT_RULES, refineFacts, type CommandAction } from "./ai";
+import { namesPerson } from "./fact-rules";
 import { isoDay } from "./format";
 import { budgetState, callJSON } from "./llm";
 import { log } from "./pipeline";
@@ -208,7 +209,7 @@ const ExtractSchema = z.object({
   diary: z.object({
     title: z.string().describe("Titolo della nota di diario, breve (es. «Primo giorno in Easytech»)"),
     summary: z.string().describe("Sintesi in una o due frasi"),
-    text: z.string().describe("Il racconto della giornata in prima persona, come lo scriverebbe l'utente nel suo diario: fatti, impressioni, persone. Riporta anche quello che emerge nel resto della conversazione: decisioni, criteri e requisiti (es. per un acquisto), opzioni valutate e cosa ha scelto o sta per scegliere. Solo ciò che ha detto o approvato."),
+    text: z.string().describe("Il racconto della giornata in prima persona, come lo scriverebbe l'utente nel suo diario: fatti, impressioni, persone. Riporta anche quello che emerge nel resto della conversazione: decisioni, criteri e requisiti (es. per un acquisto), opzioni valutate e cosa ha scelto o sta per scegliere. Solo ciò che ha detto l'utente, con le sue sfumature: se è ancora indeciso («ci sto pensando», «probabilmente», «domani scelgo») scrivi che sta valutando, mai «ho deciso». Niente dettagli presi dalle domande del Second Brain che l'utente non ha confermato (es. chi ha fissato un budget)."),
     tags: z.array(z.string()).describe("1-4 tag senza #"),
   }),
   people: z.array(z.object({
@@ -216,14 +217,14 @@ const ExtractSchema = z.object({
     name: z.string().describe("Nome e cognome come detti dall'utente"),
     role: z.string().nullable(), org: z.string().nullable(),
     note: z.string().nullable().describe("Chi è per l'utente, in breve (es. «collega in Easytech, conosciuto il primo giorno; molto disponibile»)"),
-  })).describe("Persone nominate nella conversazione, con quello che l'utente ne ha detto. Se l'utente parla di qualcuno senza dirne il nome (es. «il titolare»), non attribuirlo a una persona nota: indicala solo se ne dice il nome. Ruolo e organizzazione solo se detti o chiari dal contesto (es. il titolare della nuova azienda → org = quell'azienda). Vuoto se nessuna."),
+  })).describe("Persone che l'utente nomina per nome nei suoi messaggi, con quello che ne ha detto. Se parla di qualcuno senza dirne il nome («il titolare», «un nuovo collega»), non è nessuna persona nota: non indicarla, anche se una persona nota ha un ruolo simile. Ruolo e organizzazione solo se detti o chiari dal contesto (es. il titolare della nuova azienda → org = quell'azienda). Vuoto se nessuna."),
   facts: z.array(z.object({
     text: z.string().describe("Fatto stabile sull'utente, in terza persona"),
     replaces: z.array(z.string()).describe("id dei fatti noti che questo cambia o corregge; vuoto se dicono la stessa cosa"),
     validFrom: z.string().nullable().describe("Da quando vale, YYYY-MM-DD, se detto; null altrimenti o se permanent"),
     permanent: z.boolean().describe("true se è vero da sempre e non cambierà (data e luogo di nascita, genitori)"),
-  })).describe("Solo fatti stabili e nuovi (lavoro, ruolo, abitudini, preferenze durature, cose che possiede e usa: es. «Usa uno Xiaomi 15T Pro»), mai quelli già noti né criteri legati a una sola decisione del momento (quelli vanno nel diario). Vuoto se non ce ne sono."),
-  tasks: z.array(z.object({ title: z.string(), due: z.string().nullable().describe("YYYY-MM-DD se detto") })).describe("Cose da fare emerse (es. «devo mandare i documenti all'HR entro venerdì»). Vuoto se nessuna."),
+  })).describe("Solo fatti stabili e nuovi (lavoro, ruolo, abitudini, preferenze durature, cose che possiede e usa già: es. «Usa uno Xiaomi 15T Pro»), mai quelli già noti, né scelte ancora aperte o legate a una sola decisione del momento (quelle vanno nel diario). Vuoto se non ce ne sono."),
+  tasks: z.array(z.object({ title: z.string(), due: z.string().nullable().describe("YYYY-MM-DD se detto; «domani» = il giorno dopo <oggi>") })).describe("Cose da fare emerse, anche quelle dette di sfuggita (es. «devo mandare i documenti all'HR entro venerdì», «domani cerco di scegliere il telefono» → «Scegliere il telefono» per domani). Vuoto se nessuna."),
   projectId: z.string().nullable().describe("id di un progetto solo se la conversazione parla proprio di quel progetto (es. «Casa» solo per i lavori di casa); il lavoro e la vita in generale non sono progetti: null"),
   aimId: z.string().nullable().describe("id di un obiettivo personale a cui la giornata si riferisce, se chiaro"),
   aimReached: z.boolean().describe("true se dalla conversazione l'obiettivo aimId risulta raggiunto"),
@@ -244,7 +245,7 @@ export async function extractDiary(checkinId: string, conversation: { role: "use
   const out = await callJSON<z.infer<typeof ExtractSchema>>({
     tier: "smart", task: "com_e_andata", name: "diario_estrazione", maxTokens: 2500, temperature: 0, persona: false,
     messages: [
-      { role: "system", content: "Dalla conversazione serale tra l'utente e il suo Second Brain ricava cosa conviene ricordare, leggendo tutta la conversazione (non solo il primo messaggio). Solo ciò che l'utente ha detto davvero, niente supposizioni. Usa gli id noti quando una persona, un progetto o un obiettivo è già in memoria.\n" + FACT_RULES },
+      { role: "system", content: "Dalla conversazione serale tra l'utente e il suo Second Brain ricava cosa conviene ricordare, leggendo tutta la conversazione (non solo il primo messaggio). Solo ciò che l'utente ha detto davvero, niente supposizioni: le domande e le ipotesi del Second Brain non sono informazioni, a meno che l'utente le abbia confermate. Usa gli id noti quando una persona, un progetto o un obiettivo è già in memoria.\n" + FACT_RULES },
       { role: "user", content: `<oggi>${isoDay()}</oggi>\n<motivo_del_check_in>\n${(c?.events ?? []).map((e) => e.text).join("\n") || "check-in generico"}\n</motivo_del_check_in>\n<persone_note>${JSON.stringify(pp)}</persone_note>\n<fatti_noti>${JSON.stringify(fs)}</fatti_noti>\n<progetti>${JSON.stringify(ps)}</progetti>\n<obiettivi_personali>${JSON.stringify(as)}</obiettivi_personali>\n<conversazione>\n${conversation.map((t) => `${t.role === "user" ? "Utente" : "Second Brain"}: ${t.text}`).join("\n")}\n</conversazione>` },
     ],
     jsonSchema: z.toJSONSchema(ExtractSchema),
@@ -260,12 +261,15 @@ export async function extractDiary(checkinId: string, conversation: { role: "use
 
   const actions: CommandAction[] = [];
   const mentioned: string[] = [];
+  // Solo le persone che l'utente ha nominato davvero: il modello tende ad attribuire «il nuovo collega» a una persona nota.
+  const userText = conversation.filter((t) => t.role === "user").map((t) => t.text).join("\n");
   for (const p of out.people.slice(0, 8)) {
     const name = p.name.trim();
     if (!name) continue;
     const pid = (p.personId && personIds.has(p.personId) ? p.personId : null) ?? byName.get(name.toLowerCase()) ?? null;
-    mentioned.push(name);
     const known = pid ? pp.find((x) => x.id === pid) : null;
+    if (!namesPerson(userText, known?.name ?? name)) continue;
+    mentioned.push(known?.name ?? name);
     // Una persona già nota senza niente di nuovo non serve riproporla.
     if (known && !p.note && (!p.role || p.role === known.role) && (!p.org || p.org === known.org)) continue;
     actions.push({ ...nul, kind: "upsert_person", label: pid ? `Aggiorna ${name}` : `Nuova persona: ${name}`, personId: pid, name: pid ? null : name, role: p.role, org: p.org, note: p.note } as CommandAction);

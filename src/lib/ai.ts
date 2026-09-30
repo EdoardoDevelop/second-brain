@@ -54,6 +54,7 @@ const ProposalSchema = z.object({
 const SYSTEM = `Sei il motore di classificazione di un "Second Brain" personale, in italiano.
 Ricevi un contenuto appena catturato e il contesto della memoria esistente.
 Proponi come archiviarlo. La proposta verrà confermata o corretta dall'utente: non inventare fatti.
+Il tipo segue le parole dell'utente: Decisione solo se ha deciso davvero; se è ancora incerto («probabilmente», «sto pensando», «forse», «domani scelgo») è una Nota o un'Idea, e nella sintesi resta un'ipotesi.
 Collega solo elementi davvero pertinenti e segnala come conflitto solo una contraddizione reale (es. una decisione presa e un'idea che va nella direzione opposta).
 Usa solo id di progetti ed elementi presenti nel contesto.`;
 

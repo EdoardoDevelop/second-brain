@@ -7,7 +7,7 @@ import { cadenceLabel, cadenceOf, cleanLabel, nextDate, sameSeries } from "../sr
 import { dueLabel, isoDay } from "../src/lib/format";
 import { speechText } from "../src/lib/speech";
 import { isExcluded, parseNewsConfig } from "../src/lib/news";
-import { factKey, freshFacts, isAboutUser, parseBirth } from "../src/lib/fact-rules";
+import { factKey, freshFacts, isAboutUser, namesPerson, parseBirth } from "../src/lib/fact-rules";
 
 const DAY = 86400000;
 
@@ -126,4 +126,11 @@ test("isAboutUser: la nascita dell'utente, non di altri", () => {
   assert.equal(isAboutUser("Il suo compleanno è il 29 dicembre"), true);
   assert.equal(isAboutUser("Il 29 dicembre è il mio compleanno"), true);
   assert.equal(isAboutUser("La figlia è nata il 3 maggio 2019"), false);
+});
+
+test("namesPerson: solo se il nome o il cognome è detto davvero", () => {
+  assert.equal(namesPerson("Domani avrò un nuovo collega in ComputerRivo", "Diego Bernardi"), false);
+  assert.equal(namesPerson("Oggi ho visto Diego a pranzo", "Diego Bernardi"), true);
+  assert.equal(namesPerson("Ho parlato con Bernardi", "Diego Bernardi"), true);
+  assert.equal(namesPerson("Il titolare, Lorenzo, è stato gentile", "Lorenzo Properzi"), true);
 });

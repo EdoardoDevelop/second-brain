@@ -53,6 +53,15 @@ export function parseBirth(text: string): BirthDate | null {
   return { day, month, year };
 }
 
+/**
+ * L'utente ha nominato davvero questa persona nel testo (nome o cognome, parola intera)? Serve a non attribuire
+ * a una persona nota qualcuno di cui l'utente non ha detto il nome («il nuovo collega» non è Diego Bernardi).
+ */
+export function namesPerson(text: string, fullName: string): boolean {
+  const t = " " + plain(text).replace(/[^\p{L}\p{N}]+/gu, " ") + " ";
+  return plain(fullName).split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3).some((w) => t.includes(` ${w} `));
+}
+
 /** Un fatto parla della nascita dell'utente stesso (non di un'altra persona): «È nato…», «Il suo compleanno…». */
 export function isAboutUser(text: string, userName = ""): boolean {
   let t = plain(text);
