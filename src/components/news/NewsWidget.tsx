@@ -138,7 +138,7 @@ function Settings({ cfg, setCfg, feed, aiOn, refreshing, regenerate, onDone }: {
   const [pending, start] = useTransition();
   const save = (next: NewsConfig) => { setCfg(next); start(() => saveNewsConfig(next)); };
   const exclude = (raw: string) => {
-    const v = raw.replace(/s+/g, " ").trim();
+    const v = raw.replace(/\s+/g, " ").trim();
     setNoText("");
     if (!v || cfg.excluded.some((t) => t.toLowerCase() === v.toLowerCase()) || cfg.excluded.length >= 20) return;
     // Un argomento escluso non resta tra quelli seguiti.
