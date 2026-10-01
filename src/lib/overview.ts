@@ -6,7 +6,7 @@ import { aimItems, aims, goals, itemPeople, items, links, people, projects, task
 import { isoDay } from "./format";
 import { callJSON } from "./llm";
 import { log } from "./pipeline";
-import { hybridSearch } from "./semantic";
+import { hybridSearch, semanticSearch } from "./semantic";
 import { getSetting, setSetting } from "./settings";
 
 /**
@@ -104,7 +104,11 @@ async function gather(topic: string): Promise<Material> {
 
   // Sempre anche la ricerca: prende ciò che ne parla senza essere collegato.
   const known = new Set(mem.map((i) => i.id));
-  const found = await hybridSearch(scope.kind === "search" ? topic : `${scope.label} ${topic}`, 25).catch(() => [] as string[]);
+  // Per un progetto, una persona, un obiettivo o un tag solo il significato, vicino al migliore: con le parole «casa»
+  // trovava mezza memoria (il quadro di «Casa» leggeva la foto di Clelia e attribuiva al progetto persone a caso).
+  const found = scope.kind === "search"
+    ? await hybridSearch(topic, 25).catch(() => [] as string[])
+    : await semanticSearch(scope.label.replace(/^#/, ""), 25).then((r) => r.filter((x) => x.score >= (r[0]?.score ?? 0) - 0.08).map((x) => x.id)).catch(() => [] as string[]);
   const order = new Map(mem.map((i, k) => [i.id, k]));
   const linked = ids.filter((id) => known.has(id)).sort((a, b) => order.get(a)! - order.get(b)!);
   const all = [...new Set([...linked, ...found.filter((id) => known.has(id))])].slice(0, 40);

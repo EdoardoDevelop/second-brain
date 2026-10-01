@@ -6,7 +6,7 @@ import { eq, gte, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db, newId, ready } from "./db";
 import { aimItems, aims, AIM_STATUSES, type AimStatus } from "./db/schema";
 import { aiLog, aiUsage, apiKeys, attachments, backgrounds, chats, embeddings, facts, goals, insights, itemPeople, items, links, people, projects, pushSubs, tasks, webhooks, type ItemKind, type Proposal } from "./db/schema";
-import { aiEnabled, categorizeFacts, classify, contextNames, quickCommand, transcribe, manualProposal, runItemAction, type AiActionKind, type AiActionResult, type CommandAction, type CommandContext, type CommandResult } from "./ai";
+import { aiEnabled, categorizeFacts, classify, contextNames, plainQuestion, quickCommand, transcribe, manualProposal, runItemAction, type AiActionKind, type AiActionResult, type CommandAction, type CommandContext, type CommandResult } from "./ai";
 import { endSession, requireAuth } from "./auth";
 import { commandContext, memoryContext } from "./queries";
 import { isoDay, reminderFields } from "./format";
@@ -535,7 +535,7 @@ export async function interpret(input: { text?: string; audio?: string }): Promi
     const heard = input.audio ? `trascrizione ${sec(t1 - t0)} · ` : "";
     // Prima la via veloce: un solo passaggio con il modello rapido e il contesto già pronto.
     const ctx = await commandContext();
-    const quick = await quickCommand(text, ctx).catch(() => null);
+    const quick = plainQuestion(text) ? null : await quickCommand(text, ctx).catch(() => null);
     if (quick && !quick.question && (quick.actions.length || quick.facts.length)) {
       await log(input.audio ? "Comando vocale" : "Comando scritto", null, `${heard}comando ${sec(Date.now() - t1)} · proposte ${quick.actions.length} azioni${quick.facts.length ? ` e ${quick.facts.length} fatti` : ""} · via veloce`);
       return { transcript: text, actions: quick.actions, names: contextNames(ctx), reply: "", facts: quick.facts };

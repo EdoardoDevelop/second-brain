@@ -5,7 +5,7 @@ import { aims, FACT_CATEGORIES, facts as factsTable, itemPeople, items, people, 
 import type { ProposedFact } from "./chat";
 import { cleanActions, commandActionJsonSchema, FACT_CATEGORY_HELP, FACT_RULES, refineFacts, type ChatTurn, type CommandAction, type CommandContext } from "./ai";
 import { summarizeItems, TOOL_BY_NAME } from "./api-core";
-import { isoDay } from "./format";
+import { isoDay, nextDays, nowTime } from "./format";
 import { callLLM, type LlmMessage, type LlmTool } from "./llm";
 import { commandContext } from "./queries";
 import { hybridSearch } from "./semantic";
@@ -51,9 +51,15 @@ const MAX_STEPS = 5;
 const MAX_TOOL_CHARS = 14000;
 
 function toolDefs(): LlmTool[] {
+  // Le descrizioni dell'API/MCP invitano a usare today e list_tasks per l'agenda; qui attività aperte e scadenze
+  // sono già nel quadro di partenza, e ogni passo in più costa ~3 s.
+  const note: Partial<Record<string, string>> = {
+    today: " Le attività aperte con le scadenze sono già nel quadro di partenza: usalo solo se ti serve altro (Inbox da confermare, orari).",
+    list_tasks: " Le attività aperte sono già nel quadro di partenza: usalo per le completate o per un filtro che lì manca.",
+  };
   const defs: LlmTool[] = READ_TOOLS.map((n) => {
     const t = TOOL_BY_NAME.get(n)!;
-    return { type: "function", function: { name: t.name, description: t.description, parameters: t.inputSchema } };
+    return { type: "function", function: { name: t.name, description: t.description + (note[n] ?? ""), parameters: t.inputSchema } };
   });
   defs.unshift({
     type: "function",
@@ -195,15 +201,16 @@ ${o.basics}
 
 function systemPrompt(o: { today: string; weekday: string; scope: string; focus: string; mode: "chat" | "command"; basics: string }) {
   return `Sei l'Assistente del Second Brain personale dell'utente: la sua memoria di note, documenti, decisioni, riunioni, progetti, persone, attività e obiettivi. Rispondi in italiano.
-Oggi è ${o.weekday} ${o.today}. Ambito delle ricerche: ${o.scope}.${o.focus ? "\n" + o.focus : ""}
+Oggi è ${o.weekday} ${o.today}. Prossimi giorni (per le date relative usa questi, non calcolarle a mente): ${nextDays()}.
+Ambito delle ricerche: ${o.scope}.${o.focus ? "\n" + o.focus : ""}
 
 Come lavori:
-- Sotto trovi già progetti, persone, attività aperte ed elementi recenti con la sintesi: se bastano, rispondi subito, senza strumenti.
+- Sotto trovi già progetti, persone, attività aperte con la scadenza, obiettivi ed elementi recenti con la sintesi: se bastano, rispondi subito, senza strumenti. Per l'agenda e le scadenze («cosa devo fare oggi / questa settimana?») basta il quadro: today e list_tasks solo se servono le attività completate o dettagli che lì mancano.
 - Per domande sul perché o sul come di un progetto, una persona o un obiettivo («perché X è fermo?», «cosa blocca…?», «chi sto aspettando?») usa per prima cosa trace_relations: in una chiamata ti dà il percorso attività → persone → conversazioni → documenti con le prove. Rispondi seguendo quel percorso, con le prove concrete (giorni, attività, persone) e le citazioni.
-- Altrimenti cerca con search_memory e apri con get_item solo gli elementi di cui ti serve il testo completo. Sii rapido: chiama più strumenti nello stesso passo (più ricerche o più get_item insieme) invece che uno alla volta. Per la giornata usa today.
+- Altrimenti cerca con search_memory e apri con get_item solo gli elementi di cui ti serve il testo completo. Sii rapido: chiama più strumenti nello stesso passo (più ricerche o più get_item insieme) invece che uno alla volta.
 - Non inventare: usa solo ciò che trovi. Se le informazioni mancano o si contraddicono, dillo (indica la più recente).
 - Non scrivere nulla prima di aver usato gli strumenti necessari: niente "Ora cerco…".
-- Richieste di modifica (aggiungere, completare, spostare, collegare, archiviare, ricordare di…, "segna che…") → propose_actions con le azioni. Non dire mai che le hai eseguite: l'utente le conferma. Date relative convertite in YYYY-MM-DD rispetto a oggi; il nome di un giorno indica la sua prossima occorrenza dopo oggi.
+- Richieste di modifica (aggiungere, completare, spostare, collegare, archiviare, ricordare di…, "segna che…") → propose_actions con le azioni. Non dire mai che le hai eseguite: l'utente le conferma. Date relative in YYYY-MM-DD dai prossimi giorni qui sopra; il nome di un giorno indica la sua prossima occorrenza dopo oggi.
 - Quando l'utente racconta qualcosa di stabile su di sé (ruolo, lavoro, persone della sua vita e chi sono per lui, preferenze, abitudini) proponi remember_fact, un fatto per chiamata. Non per cose passeggere né già note.
 ${FACT_RULES}
 ${o.mode === "command" ? "- Questa richiesta arriva dalla barra comandi: preferisci proporre azioni; rispondi a parole solo se è una domanda.\n" : ""}
@@ -218,7 +225,8 @@ Formato della risposta:
 
 <quadro_di_partenza>
 ${o.basics}
-</quadro_di_partenza>`;
+</quadro_di_partenza>
+Ora attuale: ${nowTime()}.`;
 }
 
 const CITE = /⟦\s*([A-Za-z0-9_-]+)\s*⟧/g;

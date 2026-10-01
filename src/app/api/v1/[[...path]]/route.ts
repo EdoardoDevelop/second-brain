@@ -22,6 +22,7 @@ const ROUTES: Route[] = [
   { method: "GET", path: /^people$/, tool: "list_people", doc: "GET /people?query=… — persone" },
   { method: "GET", path: /^people\/(?<id>[\w-]+)$/, tool: "get_person", doc: "GET /people/{id} — dettaglio persona" },
   { method: "GET", path: /^relations$/, tool: "trace_relations", doc: "GET /relations?id=…|name=… — percorso delle relazioni di un progetto, una persona o un obiettivo" },
+  { method: "GET", path: /^overview$/, tool: "overview", doc: "GET /overview?topic=…&refresh=true — quadro completo di un argomento, con le fonti (non entra in memoria)" },
   { method: "POST", path: /^command$/, tool: "run_command", doc: "POST /command {text, execute?} — comando in linguaggio naturale" },
 ];
 

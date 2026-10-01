@@ -362,7 +362,7 @@ const QUESTIONS = [
   "Con chi lavoro di più e su cosa?",
   "Ci sono informazioni in conflitto nella memoria?",
 ];
-const CANDIDATES = ["anthropic/claude-haiku-4.5", "deepseek/deepseek-v4-pro", "google/gemini-3.5-flash"];
+const CANDIDATES = ["openai/gpt-6-luna", "anthropic/claude-haiku-4.5", "google/gemini-3.8-flash"];
 
 /** Confronto modelli sulla memoria vera: stesse domande, risposte affiancate con tempi e costi. Solo lettura. */
 function ModelCompare({ list, current, onUse }: { list: ModelInfo[] | null; current: string; onUse: (id: string) => void }) {

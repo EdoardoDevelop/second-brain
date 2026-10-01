@@ -78,6 +78,20 @@ async function getAutoTopics(cfg: NewsConfig, force: boolean, memory: unknown): 
 }
 
 const cfgKey = (c: NewsConfig) => JSON.stringify([c.topics, c.auto, c.intl, c.count, c.excluded]);
+
+/** Le più recenti di ogni argomento, a turno: con le sole più recenti un argomento molto attivo occupava tutti i posti. */
+function roundRobin(list: Article[], max: number): Article[] {
+  const by = new Map<string, Article[]>();
+  for (const a of list) by.set(a.topic, [...(by.get(a.topic) ?? []), a]);
+  const queues = [...by.values()];
+  const out: Article[] = [];
+  for (let i = 0; out.length < max && queues.some((q) => q.length > i); i++) for (const q of queues) if (q[i] && out.length < max) out.push(q[i]);
+  return out;
+}
+
+/** Valutazioni dell'IA per notizia (`settings.news_ranked`), valide 24 ore e per la stessa configurazione. */
+type Ranked = { key: string; scores: Record<string, { score: number; reason: string; at: number }> };
+const RANK_TTL = 24 * 3600_000;
 let inflight: { key: string; p: Promise<NewsFeed> } | null = null;
 
 /** Notizie della Home: dalla cache se recenti, altrimenti le raccoglie (e le fa scegliere all'IA). */
@@ -125,15 +139,35 @@ async function build(cfg: NewsConfig, newTopics: boolean): Promise<NewsFeed> {
   let forYou: string[] = [];
   if (useAi && articles.length) {
     try {
-      const candidates = articles.slice(0, 60);
-      const picks = await rankNews(memory, candidates.map((a) => ({ id: a.id, title: a.title, source: a.source, topic: a.topic })), cfg.count, cfg.excluded);
-      for (const p of picks) {
-        const a = articles.find((x) => x.id === p.id)!;
-        a.reason = p.reason;
-        a.score = p.score;
+      const candidates = roundRobin(articles, 60);
+      // Valutazioni già fatte (stessa configurazione, ultime 24 ore): all'IA vanno solo i titoli nuovi,
+      // e se non ce ne sono nessuna chiamata. Prima ogni giro (circa ogni 2 ore) rimandava tutti i 60 titoli.
+      const rkey = cfgKey(cfg);
+      const saved = JSON.parse((await getSetting("news_ranked")) ?? "null") as Ranked | null;
+      const ranked: Ranked["scores"] = saved?.key === rkey ? Object.fromEntries(Object.entries(saved.scores).filter(([, s]) => Date.now() - s.at < RANK_TTL)) : {};
+      const fresh = candidates.filter((a) => !ranked[a.id]);
+      if (fresh.length) {
+        // Il doppio dei posti: con il limite per argomento servono riserve.
+        const picks = await rankNews(memory, fresh.map((a) => ({ id: a.id, title: a.title, source: a.source, topic: a.topic })), cfg.count * 2, cfg.excluded);
+        const at = Date.now();
+        // Le non scelte restano a 0: valutate, non si rimandano.
+        for (const a of fresh) ranked[a.id] = { score: 0, reason: "", at };
+        for (const p of picks) ranked[p.id] = { score: p.score, reason: p.reason, at };
+        await setSetting("news_ranked", JSON.stringify({ key: rkey, scores: ranked } satisfies Ranked));
       }
-      forYou = picks.map((p) => p.id);
-      await log("Notizie: selezione per te", null, `${picks.length} scelte su ${candidates.length}`);
+      // Varietà: al massimo un terzo della scheda sullo stesso argomento (prima uscivano solo notizie di domotica).
+      const perTopic = Math.max(2, Math.ceil(cfg.count / 3));
+      const used = new Map<string, number>();
+      const picks = candidates.filter((a) => (ranked[a.id]?.score ?? 0) > 0)
+        .sort((a, b) => ranked[b.id].score - ranked[a.id].score || b.published - a.published)
+        .filter((a) => { const n = used.get(a.topic) ?? 0; used.set(a.topic, n + 1); return n < perTopic; })
+        .slice(0, cfg.count);
+      for (const a of picks) {
+        a.reason = ranked[a.id].reason;
+        a.score = ranked[a.id].score;
+      }
+      forYou = picks.map((a) => a.id);
+      await log("Notizie: selezione per te", null, `${picks.length} scelte su ${candidates.length}${fresh.length < candidates.length ? ` (${fresh.length} nuove valutate dall'IA)` : ""}`);
     } catch (e) {
       aiError = (e as Error).message;
       await log("Notizie: selezione per te", null, `Errore: ${aiError}`);

@@ -110,6 +110,24 @@ function unionCount(s: unknown): number {
 /** I modelli Claude rifiutano gli schemi rigorosi con più di 16 campi «unione» (errore 400 «Provider returned error»). */
 const CLAUDE_UNION_LIMIT = 16;
 
+/**
+ * Modelli OpenAI che ragionano (GPT-5/6, serie o): non accettano la temperatura (con require_parameters nessun fornitore
+ * risponde: «No endpoints found that can handle the requested parameters») e di base ragionano prima di rispondere.
+ * Per i compiti di tutti i giorni ragionamento minimo: misurato il 1/10 con GPT-6 Luna, risposte 2-3 volte più rapide
+ * e della stessa qualità; «Pensa meglio» (expert) lascia il ragionamento predefinito.
+ */
+const OPENAI_REASONING = /^openai\/(gpt-[5-9]|o\d)/;
+
+/** Punti di cache (Anthropic): fine del prompt di sistema e ultimo messaggio di testo. */
+function withCacheMarks(msgs: LlmMessage[]): LlmMessage[] {
+  const mark = (m: LlmMessage): LlmMessage =>
+    typeof m.content === "string" && m.content && (m.role === "system" || m.role === "user" || m.role === "tool")
+      ? ({ ...m, content: [{ type: "text", text: m.content, cache_control: { type: "ephemeral" } }] } as LlmMessage)
+      : m;
+  const last = msgs.length - 1;
+  return msgs.map((m, i) => (i === 0 || i === last ? mark(m) : m));
+}
+
 async function send(req: LlmRequest, cfg: AiConfig, model: string, tier: AiTier): Promise<LlmResult> {
   // Schema troppo complesso per il modello: niente vincolo rigido, lo schema va nelle istruzioni (la risposta la valida comunque callJSON).
   const looseSchema = !!req.schema && model.startsWith("anthropic/") && unionCount(req.schema.schema) > CLAUDE_UNION_LIMIT;
@@ -119,6 +137,9 @@ async function send(req: LlmRequest, cfg: AiConfig, model: string, tier: AiTier)
   const system = msgs[0]?.role === "system" && req.persona !== false
     ? [{ ...msgs[0], content: `${msgs[0].content}\n\n${await userContext()}` } as LlmMessage, ...msgs.slice(1)]
     : msgs;
+  // Modelli Claude con gli strumenti (Assistente a passi): strumenti, prompt di sistema e conversazione fin qui vanno in
+  // cache; il passo dopo (e la domanda successiva entro 5 minuti) li rilegge a un decimo del prezzo e risponde prima.
+  const cached = model.startsWith("anthropic/") && !!req.tools?.length ? withCacheMarks(system) : system;
   const stream = !!req.onDelta;
   const res = await fetch(`${OPENROUTER_URL}/chat/completions`, {
     method: "POST",
@@ -126,8 +147,9 @@ async function send(req: LlmRequest, cfg: AiConfig, model: string, tier: AiTier)
     body: JSON.stringify({
       model,
       max_tokens: req.maxTokens ?? 4000,
-      ...(req.temperature != null ? { temperature: req.temperature } : {}),
-      messages: system,
+      ...(req.temperature != null && !OPENAI_REASONING.test(model) ? { temperature: req.temperature } : {}),
+      ...(OPENAI_REASONING.test(model) && tier !== "expert" ? { reasoning: { effort: "minimal" } } : {}),
+      messages: cached,
       ...(req.tools?.length ? { tools: req.tools, tool_choice: "auto" } : {}),
       ...(req.schema && !looseSchema ? { response_format: { type: "json_schema", json_schema: { name: req.schema.name, strict: true, schema: req.schema.schema } } } : {}),
       ...(stream ? { stream: true } : {}),

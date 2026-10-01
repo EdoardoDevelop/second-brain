@@ -351,6 +351,24 @@ export const TOOLS: Tool[] = [
     },
   },
   {
+    name: "overview",
+    title: "Quadro completo",
+    description: "Il «quadro completo» di un argomento (progetto, persona, obiettivo personale, tag o testo libero): sintesi, obiettivo, stato, decisioni, problemi aperti, persone, contraddizioni e prossimi passi, ognuno con le fonti. Non entra in memoria. Riusa l'ultimo quadro dello stesso argomento se da allora non è cambiato nulla; refresh true per rifarlo.",
+    scope: "read",
+    inputSchema: { type: "object", properties: { topic: { type: "string", description: "Argomento: nome di un progetto, di una persona, di un obiettivo, un #tag o parole libere" }, refresh: { type: "boolean" } }, required: ["topic"] },
+    run: async (a) => {
+      if (!(await aiEnabled())) throw new ApiError("L'IA di Second Brain non è configurata.", 503);
+      const topic = str(a, "topic", true)!;
+      const { buildOverview, cachedOverview, overviewCounts } = await import("./overview");
+      const saved = a.refresh === true || a.refresh === "true" ? null : await cachedOverview(topic);
+      if (saved) {
+        const now = await overviewCounts(topic);
+        if (now.items === saved.counts.items && now.tasks === saved.counts.tasks) return { ...saved, cached: true };
+      }
+      return buildOverview(topic);
+    },
+  },
+  {
     name: "run_command",
     title: "Comando in linguaggio naturale",
     description: "Interpreta una richiesta in italiano come fa la barra comandi dell'app (catture, attività con orari e promemoria, progetti, obiettivi, persone, modifiche e collegamenti tra elementi). Con execute=false (predefinito) restituisce solo le azioni proposte: mostrale all'utente e, dopo la sua conferma, ripeti la chiamata con execute=true.",

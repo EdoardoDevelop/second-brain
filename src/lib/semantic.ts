@@ -17,8 +17,17 @@ import { getAiConfig, setSetting } from "./settings";
 const BATCH = 32;
 const g = globalThis as unknown as { __sbVec?: { model: string; ids: string[]; vecs: Float32Array[] } | null; __sbVecSync?: Promise<number> | null };
 
-const docText = (i: { title: string; summary: string | null; tags: string[]; content: string }) =>
-  [i.title, i.summary, i.tags.length ? "Tag: " + i.tags.join(", ") : "", i.content.slice(0, 3000)].filter(Boolean).join("\n");
+/**
+ * I modelli di Google rendono molto meglio con il formato per il recupero: «title: … | text: …» per i documenti e
+ * «task: search result | query: …» per le domande. Misurato il 1/10 sulla memoria vera (12 domande con le risposte
+ * attese): precisione media 0,80 senza, 0,99 con (es. «Clelia» trovava la foto di Clelia per ultima).
+ */
+const googleFormat = (model: string) => model.startsWith("google/");
+const docText = (i: { title: string; summary: string | null; tags: string[]; content: string }, model: string) => {
+  const body = [i.summary, i.tags.length ? "Tag: " + i.tags.join(", ") : "", i.content.slice(0, 3000)].filter(Boolean).join("\n");
+  return googleFormat(model) ? `title: ${i.title} | text: ${body}` : [i.title, body].filter(Boolean).join("\n");
+};
+const queryText = (q: string, model: string) => (googleFormat(model) ? `task: search result | query: ${q}` : q);
 
 async function embed(texts: string[], task: string): Promise<Float32Array[]> {
   const cfg = await getAiConfig();
@@ -64,7 +73,7 @@ export function syncEmbeddings(max = 400): Promise<number> {
       else await db.delete(embeddings);
       const have = new Map((await db.select({ id: embeddings.itemId, hash: embeddings.hash }).from(embeddings)).map((r) => [r.id, r.hash]));
       const pending = mem
-        .map((m) => ({ id: m.id, text: docText(m), hash: "" }))
+        .map((m) => ({ id: m.id, text: docText(m, model), hash: "" }))
         .map((m) => ({ ...m, hash: crypto.createHash("sha1").update(model + "\n" + m.text).digest("hex") }))
         .filter((m) => have.get(m.id) !== m.hash);
       const todo = pending.slice(0, max);
@@ -110,10 +119,12 @@ export async function semanticSearch(query: string, limit = 30, within?: Set<str
   if (!q) return [];
   const store = await vectors();
   if (!store.ids.length) return [];
-  let qv = queryCache.get(q);
+  // La chiave comprende il modello: cambiando modello i vettori vecchi non sono confrontabili.
+  const ck = `${store.model}|${q}`;
+  let qv = queryCache.get(ck);
   if (!qv) {
-    [qv] = await embed([q], "ricerca");
-    queryCache.set(q, qv);
+    [qv] = await embed([queryText(q, store.model)], "ricerca");
+    queryCache.set(ck, qv);
     if (queryCache.size > 200) queryCache.delete(queryCache.keys().next().value!);
   }
   const out: { id: string; score: number }[] = [];
@@ -136,8 +147,10 @@ export async function hybridSearch(query: string, limit = 20, within?: Set<strin
   ]);
   const score = new Map<string, number>();
   words.forEach((id, r) => score.set(id, (score.get(id) ?? 0) + 1 / (60 + r)));
-  // Solo le somiglianze sensate: sotto una soglia minima il significato non aggiunge nulla.
-  meaning.filter((m) => m.score > 0.2).forEach((m, r) => score.set(m.id, (score.get(m.id) ?? 0) + 1 / (60 + r)));
+  // Solo le somiglianze sensate: vicine alla migliore (la scala assoluta cambia da domanda a domanda; prima con
+  // «> 0,2» passava tutta la memoria e il quadro completo di «Casa» leggeva anche la foto di Clelia).
+  const best = meaning[0]?.score ?? 0;
+  meaning.filter((m) => m.score > 0.3 && m.score >= best - 0.1).forEach((m, r) => score.set(m.id, (score.get(m.id) ?? 0) + 1 / (60 + r)));
   return [...score].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([id]) => id);
 }
 

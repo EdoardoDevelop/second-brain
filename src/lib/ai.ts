@@ -5,6 +5,7 @@ import type { ProposedFact } from "./chat";
 import { db } from "./db";
 import { FACT_CATEGORIES, facts, ITEM_TYPES, people, projects, type FactCategory, type Proposal } from "./db/schema";
 import { freshFacts, parseBirth } from "./fact-rules";
+import { isoDay, nextDays, nowTime } from "./format";
 import { callJSON, callLLM } from "./llm";
 import { getAiConfig, type AiTier } from "./settings";
 
@@ -201,14 +202,15 @@ const COMMAND_SYSTEM = `Sei l'interprete dei comandi di un "Second Brain" person
 Ricevi una richiesta (audio da trascrivere o testo) e il contesto: data di oggi, progetti, persone, attività (aperte e completate di recente, con done) ed elementi della memoria (note, documenti, riunioni…).
 Trasforma la richiesta in azioni. Verranno mostrate all'utente, che le conferma: non inventare nulla. Compila solo i campi che servono all'azione, gli altri null.
 - capture: per note, idee, resoconti o qualsiasi informazione nuova da archiviare. È la scelta predefinita se la richiesta non è un comando.
-- add_task: nuova attività. Date relative ("venerdì", "domani") convertite in YYYY-MM-DD rispetto a oggi; il nome di un giorno indica la sua prossima occorrenza dopo oggi (se oggi è venerdì, "venerdì" è tra 7 giorni), salvo "oggi". prio solo se l'utente la indica ("urgente" = 1).
+- add_task: nuova attività. Date relative ("venerdì", "domani") in YYYY-MM-DD: leggile dal <calendario>, non calcolarle a mente. Il nome di un giorno è la sua prossima occorrenza dopo oggi (il primo con quel nome nel calendario dopo oggi), salvo "oggi". prio solo se l'utente la indica ("urgente" = 1).
 - complete_task, reopen_task, set_task_due, delete_task: solo su attività esistenti, indicate con il loro id. reopen_task solo per attività con done true.
+- Se l'utente dice di aver fatto, deciso o risolto ciò che un'attività aperta chiede (anche con altre parole: "ho scelto il telefono" chiude "Scegliere il telefono aziendale"), proponi complete_task su quell'attività; se aggiunge dettagli che vale la pena conservare (cosa ha scelto, com'è andata), anche una capture.
 - Orari e promemoria: "alle 15", "domani alle 9:30" → time in HH:MM. "Ricordami", "avvisami", "promemoria" con un orario → remind 0, oppure i minuti di anticipo richiesti ("mezz'ora prima" = 30). Se c'è un orario senza giorno, il giorno è oggi se l'orario non è passato, altrimenti domani. Senza orario non c'è promemoria: time e remind null.
 - update_task: rinomina, sposta in un progetto o cambia priorità o scadenza di un'attività esistente.
 - create_project, update_project: per update_project usa l'id esistente e compila solo i campi da cambiare.
 - add_goal: nuovo obiettivo. Di un progetto esistente se ne parla l'utente (projectId); altrimenti è un obiettivo personale (projectId null, es. "il mio obiettivo è cambiare lavoro entro marzo"), con due se c'è una scadenza. complete_goal ("ho raggiunto…"), reopen_goal, delete_goal, update_goal (titolo, scadenza, stato, descrizione di un obiettivo personale): su obiettivi esistenti (goals o aims), con goalId. Un obiettivo è un risultato da raggiungere; un'attività è una cosa da fare: se l'utente dice "obiettivo" usa add_goal.
 - Collegare un'attività o un elemento a un obiettivo personale: goalId in add_task, update_task o update_item ("per l'obiettivo X", "serve per…").
-- upsert_person: personId esistente per modificare, null per creare. Compila solo i campi citati.
+- upsert_person: personId esistente per modificare, null per creare. Compila solo i campi citati. Quando l'utente dice chi è o che cosa fa una persona già presente in persone ("Martin è il mio vicino ed è elettricista"), aggiorna la sua scheda (role, org o note) con il suo personId.
 - update_item: modifica un elemento della memoria (titolo, sintesi, progetto, tag da aggiungere o togliere, persone da collegare).
 - append_item: aggiunge un'informazione a un elemento esistente ("aggiungi alla nota della riunione che…"). Preferiscilo a capture solo se l'utente indica chiaramente l'elemento.
 - archive_item: archivia un elemento. favorite_item: aggiunge ai preferiti (conflict false per toglierlo).
@@ -264,6 +266,22 @@ function captureOnlyAsFallback(actions: CommandAction[], facts: ProposedFact[]):
 }
 
 /**
+ * Richieste di fare qualcosa: imperativi (anche con «lo», «mi»…: «spostala», «ricordami») o forme cortesi («puoi…?»).
+ * Con una di queste la frase va comunque alla via veloce, anche se ha il punto di domanda.
+ */
+const COMMAND_VERB = /\b(aggiungi|ricorda|segna|crea|sposta|cambia|metti|collega|archivia|elimina|cancella|completa|rinomina|unisci|annota|salva|imposta|avvisa|programma|fissa|rimanda|chiudi|apri|togli|scrivi|registra)(lo|la|li|le|mi|ci|ne|gli|melo|mela|ti)?\b|\b(puoi|potresti|riesci a|vorrei)\b/i;
+
+/**
+ * Domanda evidente («cosa devo fare oggi?», «chi è Lorenzo?»): va dritta all'Assistente, senza il passaggio
+ * della via veloce che risponderebbe solo «è una domanda» (~0,8 s e una chiamata in più).
+ */
+export function plainQuestion(text: string): boolean {
+  const s = text.trim();
+  if (!s.endsWith("?") || s.length > 300 || COMMAND_VERB.test(s)) return false;
+  return /^(e\s+)?(cosa|che|chi|come|com'è|quando|quanto|quanti|quante|quale|quali|qual|perch[eé]|dove|c'è|ci sono|sai|mi (dici|ricordi|spieghi|riassumi)|riassumi|spiegami|dimmi)(?=[\s,?!.]|$)/i.test(s);
+}
+
+/**
  * Smistamento veloce (modello "fast", una sola chiamata, contesto già incluso): i comandi diventano subito azioni
  * da confermare; se è una domanda, `question` è true e la risposta la dà l'Assistente a passi.
  */
@@ -276,7 +294,11 @@ export async function quickCommand(text: string, ctx: CommandContext, turns: Cha
       { role: "system", content: COMMAND_SYSTEM + "\nSe la richiesta è una domanda (anche insieme a un comando) metti question true: risponderà l'Assistente, che può proporre lui le azioni.\nSe la richiesta dice solo qualcosa di stabile sull'utente (dati personali, lavoro, abitudini, preferenze), proponi il fatto in facts e nessuna capture: i fatti su di lui non vanno anche tra le note.\n" + FACT_RULES },
       { role: "user", content: `<contesto>
 ${JSON.stringify(ctx)}
-</contesto>${known.length ? `\n\n<fatti_gia_noti_sull_utente>\n${known.map((f) => `${f.id}: ${f.text}`).join("\n")}\n</fatti_gia_noti_sull_utente>` : ""}${prev ? `
+</contesto>
+
+<calendario>
+${nextDays()}. Adesso sono le ${nowTime()}.
+</calendario>${known.length ? `\n\n<fatti_gia_noti_sull_utente>\n${known.map((f) => `${f.id}: ${f.text}`).join("\n")}\n</fatti_gia_noti_sull_utente>` : ""}${prev ? `
 
 <conversazione_precedente>
 ${prev}
@@ -310,7 +332,8 @@ export function refineFacts(
     const permanent = !!f.permanent || !!parseBirth(text);
     out.push({
       text, category: f.category ?? null, permanent,
-      validFrom: !permanent && /^\d{4}-\d{2}-\d{2}$/.test(f.validFrom ?? "") ? f.validFrom : null,
+      // «Da oggi» senza che l'utente abbia detto una data è come nessuna data (alcuni modelli la mettono sempre).
+      validFrom: !permanent && /^\d{4}-\d{2}-\d{2}$/.test(f.validFrom ?? "") && f.validFrom !== isoDay() ? f.validFrom : null,
       replaces: [...new Set(f.replaces)].filter((id) => byId.has(id)).map((id) => ({ id, text: byId.get(id)! })),
     });
     if (out.length >= max) break;
@@ -513,7 +536,7 @@ const NewsRankSchema = z.object({
   picks: z.array(z.object({
     id: z.string(),
     score: z.number().describe("Interesse da 0 a 10"),
-    reason: z.string().describe("Perché può interessare, in italiano, massimo 90 caratteri, riferito alla memoria"),
+    reason: z.string().describe("Perché può interessare, in italiano, massimo 90 caratteri, riferito alla memoria, con il tu"),
   })),
 });
 
@@ -522,8 +545,8 @@ export async function rankNews(memory: unknown, articles: { id: string; title: s
   const r = await complete(
     NewsRankSchema,
     "notizie_per_te",
-    `Sei il filtro notizie di un Second Brain personale. Dai titoli forniti scegli al massimo ${max} notizie davvero utili o interessanti per l'utente, in base alla sua memoria.
-Scarta doppioni, clickbait, gossip e notizie solo vagamente collegate.${banned.length ? ` Scarta anche le notizie su temi che l'utente ha escluso, anche se detti con altre parole: ${banned.join(", ")}.` : ""} Per ogni scelta scrivi un motivo breve e concreto che citi il progetto o il tema della memoria.
+    `Sei il filtro notizie di un Second Brain personale. Dai titoli forniti scegli le ${max} notizie più utili o interessanti per l'utente, in base alla sua memoria (meno solo se non ce ne sono abbastanza di pertinenti), con un punteggio: 8-10 legata a qualcosa che sta facendo o scegliendo, 5-7 sui suoi temi, sotto 5 solo vagamente collegata.
+Scarta doppioni, clickbait, gossip e notizie solo vagamente collegate.${banned.length ? ` Scarta anche le notizie su temi che l'utente ha escluso, anche se detti con altre parole: ${banned.join(", ")}.` : ""} Per ogni scelta scrivi un motivo breve e concreto legato a qualcosa di preciso della memoria (un progetto, una scelta in corso, un prodotto salvato, il lavoro), non generico come «utile per la domotica», dando del tu all'utente (es. «Stai scegliendo il telefono aziendale»). Varia gli argomenti: se ci sono notizie valide su più temi, non sceglierle tutte sullo stesso.
 Usa solo gli id forniti.`,
     `<memoria>\n${JSON.stringify(memory)}\n</memoria>\n<notizie>\n${JSON.stringify(articles)}\n</notizie>`,
     2500,

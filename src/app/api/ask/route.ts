@@ -1,6 +1,6 @@
 import { inArray } from "drizzle-orm";
 import { isAuthenticated } from "@/lib/auth";
-import { aiEnabled, contextNames, quickCommand, type ChatTurn } from "@/lib/ai";
+import { aiEnabled, contextNames, plainQuestion, quickCommand, type ChatTurn } from "@/lib/ai";
 import { runAgent } from "@/lib/agent";
 import type { AskEvent, ChatAnswer } from "@/lib/chat";
 import { db } from "@/lib/db";
@@ -66,7 +66,8 @@ export async function POST(req: Request) {
         }
 
         // Via veloce: se è solo un comando, le azioni arrivano da un unico passaggio del modello rapido.
-        if (!expert) {
+        // Le domande evidenti vanno dritte all'Assistente (dopo il diario no: lì «e domani?» può essere un seguito).
+        if (!expert && (checkin || !plainQuestion(q))) {
           const t0 = Date.now();
           const ctx = await commandContext();
           // Dopo la chiusura del diario si continua a raccontare: serve tutta la conversazione (es. «il titolare» = di Easytech, detto all'inizio).

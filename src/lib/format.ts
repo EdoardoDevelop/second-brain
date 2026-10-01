@@ -9,6 +9,37 @@ export function isoDay(d: Date = new Date()) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 }
 
+/**
+ * I prossimi giorni con il nome («oggi giovedì 2026-10-01, domani venerdì 2026-10-02, sabato 2026-10-03…»), per l'IA:
+ * calcolate a mente, le date relative sbagliavano (il 1/10, giovedì, «venerdì» diventava il 9/10).
+ */
+export function nextDays(n = 14, from: Date = new Date()): string {
+  const [y, m, d] = isoDay(from).split("-").map(Number);
+  const wd = new Intl.DateTimeFormat("it-IT", { timeZone: "UTC", weekday: "long" });
+  return Array.from({ length: n }, (_, i) => {
+    const day = new Date(Date.UTC(y!, m! - 1, d! + i, 12));
+    return `${i === 0 ? "oggi " : i === 1 ? "domani " : ""}${wd.format(day)} ${day.toISOString().slice(0, 10)}`;
+  }).join(", ");
+}
+
+/** Ora attuale HH:MM nel fuso dell'utente (per «alle 6»: oggi se non è ancora passata, altrimenti domani). */
+export function nowTime(d: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
+}
+
+const DAY_SHIFT: Record<string, string> = { dopodomani: "domani", domani: "oggi", oggi: "ieri", stasera: "ieri sera", stamattina: "ieri mattina", ieri: "l'altro ieri" };
+
+/**
+ * Un testo scritto ieri riletto oggi: «domani» diventa «oggi», «oggi» diventa «ieri»… Messo solo nel prompt, il modello
+ * annunciava ancora come futuro ciò che il diario di ieri sera diceva per «domani».
+ */
+export function shiftToToday(text: string): string {
+  return text.replace(/\b(dopodomani|domani|oggi|stasera|stamattina|ieri)\b/gi, (w) => {
+    const r = DAY_SHIFT[w.toLowerCase()]!;
+    return w[0] === w[0].toUpperCase() ? r[0].toUpperCase() + r.slice(1) : r;
+  });
+}
+
 function parts(d: Date) {
   const [y, m, day] = isoDay(d).split("-").map(Number);
   return { y, m, day };

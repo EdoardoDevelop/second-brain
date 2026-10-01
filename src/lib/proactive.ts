@@ -5,7 +5,7 @@ import { db, newId } from "./db";
 import { aimItems, aims, facts, goals, insights, itemPeople, items, links, people, projects, tasks, type Why } from "./db/schema";
 import { cleanActions, CommandActionSchema, type CommandAction } from "./ai";
 import { TOOL_BY_NAME } from "./api-core";
-import { dueInfo, isoDay } from "./format";
+import { dueInfo, isoDay, shiftToToday } from "./format";
 import { budgetState, callJSON } from "./llm";
 import { log } from "./pipeline";
 import { commandContext } from "./queries";
@@ -208,7 +208,7 @@ const factsBlock = (fs: string[]) => fs.length ? `\n<cosa_so_dell_utente>\n${fs.
 
 /** Riepilogo del mattino scritto dall'IA (salvato in settings.daily_brief e mostrato nella Home). */
 export async function morningBrief(): Promise<DailyBrief> {
-  const today = await TOOL_BY_NAME.get("today")!.run({});
+  const today = (await TOOL_BY_NAME.get("today")!.run({})) as { today: string; weekday: string };
   const changes = await computeChanges();
   const diary = await lastNightDiary().catch(() => null);
   const habitsSoon = (await detectHabits().catch(() => [])).filter((h) => h.daysToNext <= 1)
@@ -221,8 +221,8 @@ export async function morningBrief(): Promise<DailyBrief> {
   const out = await callJSON<z.infer<typeof BriefSchema>>({
     tier: "smart", task: "riepilogo_mattino", name: "riepilogo_mattino", maxTokens: 1200,
     messages: [
-      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights. Le abitudini in arrivo (cose che l'utente fa di solito oggi o domani) vanno ricordate in highlights. Gli obiettivi aperti senza data (openGoals) non sono cose da fare oggi: citali solo se oggi è il giorno giusto per quel lavoro. Prima di scrivere, leggi <cosa_so_dell_utente> e il giorno della settimana: se l'utente fa certe cose in un altro giorno (es. i lavori di casa il sabato), non metterle né nel titolo né in highlights né nel body; al più un accenno («sabato: casa») se il giorno è vicino. Se c'è il racconto di ieri sera, puoi riprenderlo con naturalezza (es. «ieri mi hai detto che…») quando è utile per oggi. Se in <compleanni> oggi è il compleanno dell'utente, il titolo sono gli auguri (con gli anni che compie, se noti) e il body resta caloroso e leggero. I compleanni di altre persone di oggi o dei prossimi giorni vanno in highlights (es. «Sabato compie gli anni Clelia: un pensiero?»)." },
-      { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>${factsBlock(current)}${birthdaysBlock(bdays)}${habitsSoon.length ? `\n<abitudini_in_arrivo>\n${JSON.stringify(habitsSoon)}\n</abitudini_in_arrivo>` : ""}${diary ? `\n<ieri_sera_mi_ha_raccontato>\n${diary}\n</ieri_sera_mi_ha_raccontato>` : ""}\n<cambiato>\n${empty ? "Nulla di nuovo." : JSON.stringify(delta)}\n</cambiato>` },
+      { role: "system", content: "Scrivi il riepilogo del mattino del Second Brain personale dell'utente, in italiano. Breve, concreto e incoraggiante; niente elenchi infiniti. Usa solo i dati forniti. Se la giornata è libera, dillo in modo positivo. In <cambiato> ci sono le novità dall'ultimo riepilogo (" + sinceLabel(changes.since).toLowerCase() + "): mettile in changes, non in highlights. Le abitudini in arrivo (cose che l'utente fa di solito oggi o domani) vanno ricordate in highlights. Gli obiettivi aperti senza data (openGoals) non sono cose da fare oggi: citali solo se oggi è il giorno giusto per quel lavoro. Prima di scrivere, leggi <cosa_so_dell_utente> e il giorno della settimana: se l'utente fa certe cose in un altro giorno (es. i lavori di casa il sabato), non metterle né nel titolo né in highlights né nel body; al più un accenno («sabato: casa») se il giorno è vicino. Se c'è il racconto di ieri sera, puoi riprenderlo con naturalezza (es. «ieri mi hai detto che…») quando è utile per oggi: è stato scritto ieri, quindi il suo «domani» è oggi e il suo «oggi» è ieri (non annunciare come futuro ciò che doveva succedere oggi). Se in <compleanni> oggi è il compleanno dell'utente, il titolo sono gli auguri (con gli anni che compie, se noti) e il body resta caloroso e leggero. I compleanni di altre persone di oggi o dei prossimi giorni vanno in highlights (es. «Sabato compie gli anni Clelia: un pensiero?»)." },
+      { role: "user", content: `<oggi>\n${JSON.stringify(today)}\n</oggi>${factsBlock(current)}${birthdaysBlock(bdays)}${habitsSoon.length ? `\n<abitudini_in_arrivo>\n${JSON.stringify(habitsSoon)}\n</abitudini_in_arrivo>` : ""}${diary ? `\n<ieri_sera_mi_ha_raccontato>\n${shiftToToday(diary)}\n</ieri_sera_mi_ha_raccontato>` : ""}\n<cambiato>\n${empty ? "Nulla di nuovo." : JSON.stringify(delta)}\n</cambiato>` },
     ],
     jsonSchema: z.toJSONSchema(BriefSchema),
     parse: (v) => BriefSchema.safeParse(v) as { success: true; data: z.infer<typeof BriefSchema> } | { success: false },
@@ -417,6 +417,18 @@ function evidence(s: Awaited<ReturnType<typeof signals>>, kind: string, ids: Set
 }
 
 /** Suggerimenti del giorno (sostituiscono quelli nuovi dei giorni precedenti). */
+/** Stessa attività detta con altre parole: un titolo contiene l'altro, o quasi tutte le parole importanti coincidono. */
+export function sameTask(a: string, b: string): boolean {
+  const words = (x: string) => x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").match(/[\p{L}\p{N}]{3,}/gu) ?? [];
+  const wa = words(a), wb = words(b);
+  if (!wa.length || !wb.length) return false;
+  const ja = wa.join(" "), jb = wb.join(" ");
+  if (Math.min(ja.length, jb.length) >= 12 && (ja.includes(jb) || jb.includes(ja))) return true;
+  const sa = new Set(wa), sb = new Set(wb);
+  const common = [...sa].filter((w) => sb.has(w)).length;
+  return common / Math.min(sa.size, sb.size) >= 0.8 && common >= 2;
+}
+
 export async function generateInsights(): Promise<number> {
   const s = await signals();
   const goalSignals = s.personalGoals.some((g) => g.dueSoon || g.idle || g.noNextStep) || s.unlinked.length > 0;
@@ -457,10 +469,13 @@ Scegli solo ciò che è davvero utile; meglio pochi suggerimenti buoni. Usa solo
   await dismissOld();
   const day = isoDay();
   let n = 0;
+  const openTitles = ctx.tasks.filter((t) => !t.done).map((t) => t.title);
   for (const ins of out.insights.slice(0, 4)) {
-    const actions = cleanActions(ins.actions, ctx);
-    const refs = [...new Set(ins.refs)].filter((id) => titles.has(id)).slice(0, 6).map((id) => ({ id, title: titles.get(id)![0], href: titles.get(id)![1] }));
     const kind = ["project", "follow_up", "stale", "overdue", "conflict", "weekly", "goal", "habit", "plan"].includes(ins.kind) ? ins.kind : "other";
+    // Niente attività già aperte con altre parole (es. «Contattare Martin» quando c'è già «Contattare Martin per cercare di prendere il lavoro»).
+    const actions = cleanActions(ins.actions, ctx).filter((a) => a.kind !== "add_task" || !openTitles.some((t) => sameTask(t, a.title ?? "")));
+    if (!actions.length && ins.actions.length && kind !== "weekly" && kind !== "conflict") continue;
+    const refs = [...new Set(ins.refs)].filter((id) => titles.has(id)).slice(0, 6).map((id) => ({ id, title: titles.get(id)![0], href: titles.get(id)![1] }));
     const touched = new Set([...ins.refs, ...actions.flatMap((a) => [a.itemId, a.targetId, a.taskId, a.projectId, a.personId, a.goalId]).filter((x): x is string => !!x)]);
     const why = evidence(s, kind, touched);
     await db.insert(insights).values({ id: newId("in"), day, kind, title: ins.title.slice(0, 140), body: ins.body.slice(0, 500), actions, refs, why, status: "new", createdAt: new Date() });

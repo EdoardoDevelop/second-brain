@@ -18,9 +18,10 @@ export const DEFAULT_MODEL = "google/gemini-3.5-flash-lite";
 export type AiTier = "fast" | "files" | "smart" | "expert";
 export type AiModels = Record<AiTier | "embed", string>;
 export const DEFAULT_MODELS: Omit<AiModels, "fast" | "files"> = {
-  // Misurato il 28/9 sui dati veri: ~6 s e la risposta migliore (DeepSeek V4 Pro ~16 s, Kimi K2.6 ~55 s).
-  smart: "anthropic/claude-haiku-4.5",
-  expert: "anthropic/claude-sonnet-5",
+  // Misurato il 1/10 sulla memoria vera (con ragionamento minimo, vedi llm.ts): risposte in 3-5 s contro 4-10 di
+  // Claude Haiku 4.5, ~10 volte meno care, più fedeli (non dice di aver eseguito le azioni, non inventa dettagli).
+  smart: "openai/gpt-6-luna",
+  expert: "anthropic/claude-sonnet-5.5",
   embed: "google/gemini-embedding-2",
 };
 

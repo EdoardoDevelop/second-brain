@@ -31,8 +31,8 @@ Tutte le chiamate passano da **OpenRouter** (`src/lib/llm.ts`), con un modello d
 |---|---|---|
 | Veloce | Classificazione delle catture, notizie | `google/gemini-3.5-flash-lite` |
 | File e audio | Lettura di foto, PDF, registrazioni | come il veloce |
-| Ragionamento | Assistente, comandi, sintesi, riepilogo, suggerimenti | `deepseek/deepseek-v4-pro` |
-| Pensa meglio | Su richiesta, per la singola domanda | `anthropic/claude-sonnet-5` |
+| Ragionamento | Assistente, sintesi, riepilogo, suggerimenti, quadro completo | `openai/gpt-6-luna` (ragionamento minimo) |
+| Pensa meglio | Su richiesta, per la singola domanda | `anthropic/claude-sonnet-5.5` |
 | Significato | Ricerca per significato (embedding) | `google/gemini-embedding-2` |
 
 - **Privacy:** si possono escludere i fornitori che conservano o usano i dati, fino alla conservazione zero (ZDR). Se un modello non è disponibile con la privacy scelta, l'app ripiega sul modello veloce e lo segnala; la privacy non si allenta mai.
